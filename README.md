@@ -1,6 +1,7 @@
 # RudderStack Data Viewer Chrome Extension
 
 A Chrome extension for reading and displaying RudderStack-related data stored temporarily in **Local Storage**. It processes the stored JSON data (such as beautifying the JSON) and presents **RudderStack events** like `track` events in a **popup or side panel**.
+This extension was initially developed with the help of **ChatGPT** and **Claude**. While it is functional, there is significant room for improvement in terms of performance, accuracy, and additional features.
 
 ## Features
 - 📌 Reads RudderStack data from **Local Storage**.

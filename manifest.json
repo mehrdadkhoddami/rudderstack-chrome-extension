@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "RudderStack Tracker",
+  "version": "1.0.0",
+  "author": "Mehrdad Khoddami",
+  "description": "A Chrome extension for reading and displaying RudderStack-related data stored temporarily in Local Storage. It processes the stored JSON data (such as beautifying the JSON) and presents RudderStack events like track events in a popup or side panel.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs",
+	"sidePanel"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "16": "icon-16.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  }
+}
