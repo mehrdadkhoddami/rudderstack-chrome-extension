@@ -12,7 +12,7 @@ This extension was initially developed with the help of **ChatGPT** and **Claude
 ## Installation
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/rudderstack-extension.git
+   git clone https://github.com/mehrdadkhoddami/rudderstack-chrome-extension
    ```
 2. Open Chrome and go to `chrome://extensions/`.
 3. Enable **Developer mode** (top-right corner).
