@@ -11,6 +11,20 @@
     "tabs",
 	"sidePanel"
   ],
+   "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["contentScript.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [{
+    "resources": ["storage-monitor.js"],
+    "matches": ["<all_urls>"]
+  }],
   "background": {
     "service_worker": "background.js"
   },

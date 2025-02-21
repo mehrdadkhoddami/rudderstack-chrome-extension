@@ -15,43 +15,40 @@
 // Function that will be injected into the page to get localStorage items
 const getLocalStorageCode = () => {
     return function() {
-        const items = {};
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key.startsWith('rudder_batch')) {
-                const value = localStorage.getItem(key);
-                try {
-                    const parsedL1 = JSON.parse(value);
-                    const parsedJson = JSON.parse(parsedL1);
-                    if (parsedJson.event) {
-                        items[key] = { 
+        try {
+            const items = {};
+            const storage = { ...localStorage }; // Create a safe copy
+            
+            Object.keys(storage).forEach(key => {
+                if (key.startsWith('rudder_batch')) {
+                    const value = storage[key];
+                    try {
+                        const parsedL1 = JSON.parse(value);
+                        const parsedJson = JSON.parse(parsedL1);
+                        items[key] = {
                             value: value,
                             parsedValue: parsedJson,
-                            originalKey: parsedJson.event,
+                            originalKey: parsedJson.event || key,
                             propertiesKey: parsedJson.hasOwnProperty('properties') ? parsedJson.properties : null,
                             timestamp: Date.now()
                         };
-                    } else {
-                        items[key] = { 
+                    } catch (e) {
+                        items[key] = {
                             value: value,
-                            parsedValue: parsedJson,
+                            parsedValue: null,
                             originalKey: key,
-							propertiesKey: parsedJson.hasOwnProperty('properties') ? parsedJson.properties : null,
+                            propertiesKey: null,
                             timestamp: Date.now()
                         };
                     }
-                } catch (e) {
-                    items[key] = { 
-                        value: value,
-                        parsedValue: null,
-                        originalKey: key,
-						propertiesKey: null,
-                        timestamp: Date.now()
-                    };
                 }
-            }
+            });
+            
+            return items;
+        } catch (e) {
+            console.error('Error processing localStorage:', e);
+            return {};
         }
-        return items;
     };
 };
 
@@ -86,22 +83,32 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentStorageItems = new Map(JSON.parse(result[`currentStorageItems_${tabId}`]));
             }
 
-            // Start monitoring localStorage
+            // Initial load
             chrome.scripting.executeScript({
                 target: {tabId: tabId},
                 func: getLocalStorageCode(),
             }, displayResults);
 
-            // Setup interval for updates
-            setInterval(() => {
-                chrome.scripting.executeScript({
-                    target: {tabId: tabId},
-                    func: getLocalStorageCode(),
-                }, displayResults);
-            }, 1000);
+            // Listen for updates
+            chrome.runtime.onMessage.addListener((message) => {
+                if (message.type === 'updatePopup' && (!message.tabId || message.tabId === tabId)) {
+                    if (message.data) {
+                        const fakeResults = [{result: message.data}];
+                        displayResults(fakeResults);
+                    }
+                }
+            });
         });
     });
 });
+
+// Add this new function
+function updateStorage(tabId) {
+    chrome.scripting.executeScript({
+        target: {tabId: tabId},
+        func: getLocalStorageCode(),
+    }, displayResults);
+}
 
 
 // Function to clear all items and store current localStorage state
