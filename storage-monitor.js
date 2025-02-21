@@ -68,3 +68,17 @@
         console.warn('Failed to initialize storage monitor');
     }
 })();
+
+function setupClearListener() {
+    window.addEventListener('rudderstack_clear_monitoring', () => {
+        // Reset internal state
+        lastProcessedState = {};
+        lastNotification = 0;
+        
+        // Clear any existing intervals
+        if (monitorInterval) {
+            clearInterval(monitorInterval);
+            monitorInterval = null;
+        }
+    });
+}

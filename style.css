@@ -217,6 +217,40 @@ body.sidepanel {
     opacity: 1;
 }
 
+.batch-item {
+    border-style: dashed;
+    border-left: 2px solid #ff6b6b !important;
+	opacity: 0.7;
+    transition: all 0.3s ease;
+}
+/*
+.badges-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 8px;
+}*/
+
+.batch-badge {
+    background-color: #ff6b6b;
+    color: white;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 8px;
+	float: right;
+}
+
+.timestamp {
+    color: #666;
+    font-size: 12px;
+}
+/*
+.key-container {
+    display: flex;
+    align-items: center;
+    flex-grow: 1;
+}*/
+
 /* Key Container */
 .key-container {
     display: flex;
@@ -245,7 +279,7 @@ body.sidepanel {
     font-size: 12px;
     color: var(--text-secondary);
     opacity: 0.9;
-    padding-left: var(--spacing-md);
+    padding-left: var(--spacing-sm);
     font-family: 'SF Mono', 'Roboto Mono', monospace;
     letter-spacing: 0.5px;
 }

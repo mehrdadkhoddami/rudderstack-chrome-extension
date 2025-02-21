@@ -12,6 +12,25 @@
  * - v1.0.6: Initial version 
  */
 
+function getCurrentTabId(callback) {
+    try {
+        chrome.tabs.query({
+            active: true,
+            currentWindow: true
+        }, function(tabs) {
+            if (tabs && tabs[0] && tabs[0].id) {
+                callback(tabs[0].id);
+            } else {
+                console.error('No active tab found');
+                callback(null);
+            }
+        });
+    } catch (e) {
+        console.error('Error getting current tab:', e);
+        callback(null);
+    }
+}
+
 // Function that will be injected into the page to get localStorage items
 const getLocalStorageCode = () => {
     return function() {
@@ -113,41 +132,146 @@ function updateStorage(tabId) {
 
 // Function to clear all items and store current localStorage state
 function clearAllItems(tabId) {
+    // Clear UI first
+    const container = document.getElementById('localStorage-items');
+    container.innerHTML = '';
+
+    // Reset data structures
+    seenItems.clear();
+    currentStorageItems.clear();
+
+    // Clear storage
+    chrome.storage.local.remove([
+        `seenItemsData_${tabId}`, 
+        `currentStorageItems_${tabId}`
+    ]);
+
+    // Execute script to reset localStorage monitoring
     chrome.scripting.executeScript({
         target: {tabId: tabId},
-        func: getLocalStorageCode(),
-    }, results => {
-        if (!results || !results[0]) return;
+        func: () => {
+            // Reset monitoring state
+            window.dispatchEvent(new CustomEvent('rudderstack_clear_monitoring'));
+            // Clear localStorage data
+            Object.keys(localStorage).forEach(key => {
+                if (key.includes('rudder')) {
+                    localStorage.removeItem(key);
+                }
+            });
+            return {};
+        }
+    }, () => {
+        // Restart monitoring with fresh state
+        chrome.scripting.executeScript({
+            target: {tabId: tabId},
+            func: getLocalStorageCode(),
+        }, results => {
+            if (!results || !results[0]) return;
 
-        // Clear previous data
-        seenItems.clear();
-        currentStorageItems.clear();
+            // Store fresh state
+            const currentItems = results[0].result || {};
+            Object.entries(currentItems).forEach(([key, data]) => {
+                currentStorageItems.set(key, data);
+            });
 
-        // Store current localStorage items
-        const currentItems = results[0].result;
-        Object.entries(currentItems).forEach(([key, data]) => {
-            currentStorageItems.set(key, data);
+            // Save fresh state to storage
+            chrome.storage.local.set({
+                [`seenItemsData_${tabId}`]: JSON.stringify([...seenItems]),
+                [`currentStorageItems_${tabId}`]: JSON.stringify([...currentStorageItems])
+            });
+
+            // Reset first load flag
+            isFirstLoad = false;
         });
-
-        // Save to storage
-        chrome.storage.local.set({
-            [`seenItemsData_${tabId}`]: JSON.stringify([...seenItems]),
-            [`currentStorageItems_${tabId}`]: JSON.stringify([...currentStorageItems])
-        });
-
-        // Clear the container
-        const container = document.getElementById('localStorage-items');
-        container.innerHTML = '';
-
-        // Reset first load flag
-        isFirstLoad = false;
     });
+
+    // Try to notify contentScript if it exists
+    try {
+        chrome.tabs.sendMessage(tabId, { 
+            type: 'clearAll' 
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.log('ContentScript not ready or not found');
+            }
+        });
+    } catch (e) {
+        console.log('Error sending message to contentScript:', e);
+    }
 
     // Add button animation
     const button = document.getElementById('clearButton');
     button.classList.add('clearing');
     setTimeout(() => button.classList.remove('clearing'), 200);
 }
+
+// Update main event listener
+document.addEventListener('DOMContentLoaded', function() {
+    getCurrentTabId((tabId) => {
+        if (!tabId) {
+            console.log('No valid tab ID found');
+            return;
+        }
+
+        document.getElementById('clearButton').addEventListener('click', () => clearAllItems(tabId));
+
+        // Load stored data
+        chrome.storage.local.get([`seenItemsData_${tabId}`, `currentStorageItems_${tabId}`], function(result) {
+            try {
+                if (result[`seenItemsData_${tabId}`]) {
+                    seenItems = new Map(JSON.parse(result[`seenItemsData_${tabId}`]));
+                }
+                if (result[`currentStorageItems_${tabId}`]) {
+                    currentStorageItems = new Map(JSON.parse(result[`currentStorageItems_${tabId}`]));
+                }
+
+                // Initial load
+                chrome.scripting.executeScript({
+                    target: {tabId: tabId},
+                    func: getLocalStorageCode(),
+                }, displayResults);
+
+                // Listen for updates
+                chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+                    if (message.type === 'updatePopup' && (!message.tabId || message.tabId === tabId)) {
+                        if (message.data) {
+                            const fakeResults = [{result: message.data}];
+                            displayResults(fakeResults);
+                        }
+                        // Acknowledge receipt of message
+                        if (sendResponse) {
+                            sendResponse({ received: true });
+                        }
+                    }
+                    // Keep the message channel open
+                    return true;
+                });
+            } catch (e) {
+                console.error('Error setting up popup:', e);
+            }
+        });
+    });
+});
+
+// Add error handling to getCurrentTabId
+function getCurrentTabId(callback) {
+    try {
+        chrome.tabs.query({
+            active: true,
+            currentWindow: true
+        }, function(tabs) {
+            if (tabs && tabs[0] && tabs[0].id) {
+                callback(tabs[0].id);
+            } else {
+                console.error('No active tab found');
+                callback(null);
+            }
+        });
+    } catch (e) {
+        console.error('Error getting current tab:', e);
+        callback(null);
+    }
+}
+
 
 function prettyPrintJson(obj) {
     const jsonLine = /^( *)("[\w]+": )?("[^"]*"|[\w.+-]*)?([,[{])?$/mg;
@@ -170,13 +294,18 @@ function prettyPrintJson(obj) {
         .replace(/>/g, '&gt;')
         .replace(jsonLine, replacer);
 }
-
 // Create HTML element for an item
-function createItemElement(key, data, isSent = false) {
+function createItemElement(key, data = {}, isSent = false) {  // default empty object for data
+    // Ensure data is an object
+    data = data || {};
+    
     const itemDiv = document.createElement('div');
     itemDiv.className = 'item';
     if (isSent) {
         itemDiv.classList.add('sent-item');
+    }
+    if (data.isBatchEvent) {
+        itemDiv.classList.add('batch-item');
     }
     
     const headerDiv = document.createElement('div');
@@ -187,19 +316,40 @@ function createItemElement(key, data, isSent = false) {
     
     const keyDiv = document.createElement('div');
     keyDiv.className = 'key';
-    keyDiv.textContent = key;
+    keyDiv.textContent = key || 'Unknown Key';
     
     const subtitleDiv = document.createElement('span');
     subtitleDiv.className = 'subtitle';
-    subtitleDiv.textContent = data.originalKey;
     
-    if (data.originalKey.startsWith('rudder_batch')) {
+    // Safe access to originalKey
+    const originalKey = (data && data.originalKey) ? data.originalKey : key || 'Unknown';
+    subtitleDiv.textContent = originalKey;
+    
+    // Safe check for rudder_batch
+    if (typeof originalKey === 'string' && originalKey.startsWith('rudder_batch')) {
         subtitleDiv.className = 'subtitle-type2';
     }
     
+    // Add badges container
+    const badgesContainer = document.createElement('div');
+    badgesContainer.className = 'badges-container';
+    
     // Add sent badge if item is sent
     if (isSent) {
-        keyContainer.appendChild(createSentBadge());
+        badgesContainer.appendChild(createSentBadge());
+    }
+    
+    // Add batch badge if it's a batch event
+    if (data.isBatchEvent) {
+        badgesContainer.appendChild(createBatchBadge());
+    }
+    
+    // Add timestamp if available
+    if (data.timestamp) {
+        const timeDiv = document.createElement('div');
+        timeDiv.className = 'timestamp';
+        timeDiv.textContent = new Date(data.timestamp).toLocaleTimeString();
+        badgesContainer.appendChild(timeDiv);
     }
     
     const toggleIcon = document.createElement('span');
@@ -208,50 +358,51 @@ function createItemElement(key, data, isSent = false) {
     
     const valueContainer = document.createElement('div');
     valueContainer.className = 'value-container';
-	
-	
+    
     // Create Copy button and append it to the header
-    const copyButton = createCopyButton(data.parsedValue);
+    const copyButton = createCopyButton(data.parsedValue || {});
     
     const propertiesDiv = document.createElement('div');
     propertiesDiv.className = 'properties-value';
     propertiesDiv.textContent = 'Properties:';
-	
-	
     
     const insideValueContainer = document.createElement('div');
     insideValueContainer.className = 'inside-value-container';
     
     const valueDiv = document.createElement('pre');
     valueDiv.className = 'value';
-
-	
-    if (data.parsedValue) {
-        try {
+    
+    try {
+        if (data.parsedValue) {
             valueDiv.innerHTML = prettyPrintJson(data.parsedValue);
-        } catch (e) {
+        } else if (data.value) {
             valueDiv.textContent = data.value;
+        } else {
+            valueDiv.textContent = 'No value available';
         }
-    } else {
-        valueDiv.textContent = data.value;
+    } catch (e) {
+        console.warn('Error formatting value:', e);
+        valueDiv.textContent = data.value || 'Error displaying value';
     }
-	
-    if (data.propertiesKey) {
-        try {
+    
+    try {
+        if (data.propertiesKey) {
             propertiesDiv.appendChild(createTableFromJson(data.propertiesKey));
-        } catch (e) {
+        } else {
             propertiesDiv.textContent = '';
         }
-    } else {
+    } catch (e) {
+        console.warn('Error creating properties table:', e);
         propertiesDiv.textContent = '';
     }
     
     keyContainer.appendChild(subtitleDiv);
     keyContainer.appendChild(keyDiv);
+    keyContainer.appendChild(badgesContainer);
     
     headerDiv.appendChild(keyContainer);
     headerDiv.appendChild(toggleIcon);
-	
+    
     valueContainer.appendChild(propertiesDiv);
     valueContainer.appendChild(insideValueContainer);
     insideValueContainer.appendChild(copyButton);
@@ -266,6 +417,14 @@ function createItemElement(key, data, isSent = false) {
     });
 
     return itemDiv;
+}
+
+// Add this new helper function
+function createBatchBadge() {
+    const batchBadge = document.createElement('span');
+    batchBadge.className = 'badge batch-badge';
+    batchBadge.textContent = 'BATCH';
+    return batchBadge;
 }
 
 // Main function to display results

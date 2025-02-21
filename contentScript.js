@@ -1,9 +1,11 @@
-// contentScript.js
 (() => {
     let lastProcessedState = {};
     let isExtensionActive = true;
     let port = null;
     let monitoringInterval = null;
+    let batchEvents = [];
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 3;
 
     // Safe localStorage access
     function safeGetLocalStorage() {
@@ -53,123 +55,204 @@
     function processLocalStorageItems() {
         if (!isExtensionActive) return null;
         
-        const items = safeGetLocalStorage();
-        const currentStateStr = JSON.stringify(items);
-        const lastStateStr = JSON.stringify(lastProcessedState);
-        
-        if (currentStateStr !== lastStateStr) {
-            lastProcessedState = items;
-            return items;
-        }
-        
-        return null;
-    }
-
-    // Safe message sending
-    function safeSendMessage(data) {
-        if (!isExtensionActive || !port) return;
-        
         try {
-            port.postMessage({
-                type: 'storageChanged',
-                data: data
-            });
+            const items = safeGetLocalStorage();
+            
+            // Add batch events if available
+            if (batchEvents.length > 0) {
+                batchEvents.forEach((event, index) => {
+                    const key = `batch_event_${index}`;
+                    items[key] = {
+                        value: JSON.stringify(event),
+                        parsedValue: event,
+                        originalKey: event.event || 'Batch Event',
+                        propertiesKey: event.properties || null,
+                        timestamp: event.timestamp || Date.now(),
+                        isBatchEvent: true
+                    };
+                });
+            }
+            
+            const currentStateStr = JSON.stringify(items);
+            const lastStateStr = JSON.stringify(lastProcessedState);
+            
+            if (currentStateStr !== lastStateStr) {
+                lastProcessedState = items;
+                return items;
+            }
+            
+            return null;
         } catch (e) {
-            handleConnectionError();
+            console.error('Error processing items:', e);
+            return null;
         }
     }
 
     // Check changes and notify
     function checkAndNotifyChanges() {
-        if (!isExtensionActive) return;
-        
-        const items = processLocalStorageItems();
-        if (items !== null) {
-            safeSendMessage(items);
+        try {
+            if (!isExtensionActive || !chrome.runtime) {
+                cleanup();
+                return;
+            }
+
+            const items = processLocalStorageItems();
+            if (items && port) {
+                try {
+                    port.postMessage({
+                        type: 'storageChanged',
+                        data: items
+                    });
+                } catch (e) {
+                    console.log('Error posting message:', e);
+                    handleConnectionError();
+                }
+            }
+        } catch (e) {
+            console.error('Error in checkAndNotifyChanges:', e);
         }
     }
 
     // Setup monitoring
     function setupMonitoring() {
-        if (!isExtensionActive) return;
-
-        // Clear existing interval if any
-        if (monitoringInterval) {
-            clearInterval(monitoringInterval);
-        }
-
-        // Inject monitor script
-        const script = document.createElement('script');
-        script.src = chrome.runtime.getURL('storage-monitor.js');
-        script.onload = () => {
-            script.remove();
-            checkAndNotifyChanges();
-        };
-        (document.head || document.documentElement).appendChild(script);
-
-        // Setup storage event listener
-        window.addEventListener('storage', (e) => {
-            if (e.key && e.key.startsWith('rudder_batch')) {
-                checkAndNotifyChanges();
+        try {
+            if (!isExtensionActive || !chrome.runtime) {
+                cleanup();
+                return;
             }
-        });
 
-        // Setup custom event listener
-        window.addEventListener('rudderstack_storage_changed', checkAndNotifyChanges);
+            // Clear existing interval
+            if (monitoringInterval) {
+                clearInterval(monitoringInterval);
+            }
 
-        // Backup interval checker
-        monitoringInterval = setInterval(checkAndNotifyChanges, 1000);
+            // Inject monitor script
+            const script = document.createElement('script');
+            script.src = chrome.runtime.getURL('storage-monitor.js');
+            script.onload = () => {
+                script.remove();
+                checkAndNotifyChanges();
+            };
+            (document.head || document.documentElement).appendChild(script);
+
+            // Setup storage event listener
+            window.addEventListener('storage', (e) => {
+                if (e.key && e.key.startsWith('rudder_batch')) {
+                    checkAndNotifyChanges();
+                }
+            });
+
+            // Setup custom event listener
+            window.addEventListener('rudderstack_storage_changed', checkAndNotifyChanges);
+
+            // Backup interval checker
+            monitoringInterval = setInterval(checkAndNotifyChanges, 1000);
+
+        } catch (e) {
+            console.error('Error in setupMonitoring:', e);
+            cleanup();
+        }
     }
 
     // Connection error handler
     function handleConnectionError() {
-        isExtensionActive = false;
-        cleanup();
-        tryReconnect();
+        try {
+            cleanup();
+            
+            if (chrome.runtime && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                reconnectAttempts++;
+                setTimeout(setupConnection, 1000 * Math.pow(2, reconnectAttempts));
+            }
+        } catch (e) {
+            console.log('Error in handleConnectionError:', e);
+        }
     }
 
     // Cleanup function
     function cleanup() {
-        if (monitoringInterval) {
-            clearInterval(monitoringInterval);
-            monitoringInterval = null;
-        }
+        try {
+            if (monitoringInterval) {
+                clearInterval(monitoringInterval);
+                monitoringInterval = null;
+            }
 
-        if (port) {
-            try {
-                port.disconnect();
-            } catch (e) {}
-            port = null;
-        }
-    }
+            if (port) {
+                try {
+                    port.disconnect();
+                } catch (e) {
+                    console.log('Error disconnecting port:', e);
+                }
+                port = null;
+            }
 
-    // Reconnection attempt
-    function tryReconnect() {
-        setTimeout(setupConnection, 1000);
+            batchEvents = [];
+            isExtensionActive = false;
+            lastProcessedState = {};
+
+        } catch (e) {
+            console.log('Error in cleanup:', e);
+        }
     }
 
     // Setup connection
     function setupConnection() {
         try {
+            if (!chrome.runtime) {
+                cleanup();
+                return;
+            }
+
             cleanup();
             port = chrome.runtime.connect({ name: 'rudderstack-monitor' });
             
+            port.onMessage.addListener((message) => {
+                try {
+                    if (message.type === 'batchRequest') {
+                        console.log('Batch data received:', message.data);
+                        batchEvents = message.data.map(event => ({
+                            ...event,
+                            timestamp: message.timestamp
+                        }));
+                        checkAndNotifyChanges();
+                    }
+                } catch (e) {
+                    console.log('Error in message listener:', e);
+                }
+            });
+
             port.onDisconnect.addListener(() => {
-                if (chrome.runtime.lastError) {
-                    handleConnectionError();
+                try {
+                    if (chrome.runtime.lastError) {
+                        cleanup();
+                    }
+                } catch (e) {
+                    console.log('Error in disconnect listener:', e);
                 }
             });
 
             isExtensionActive = true;
             setupMonitoring();
         } catch (e) {
-            handleConnectionError();
+            console.log('Error in setupConnection:', e);
+            cleanup();
         }
     }
 
     // Initialize
-    setupConnection();
+    try {
+        if (chrome.runtime) {
+            setupConnection();
+        }
+    } catch (e) {
+        console.log('Error during initialization:', e);
+    }
 
     // Cleanup on unload
-    window.addEventListener('unload', cleanup);
+    window.addEventListener('unload', () => {
+        try {
+            cleanup();
+        } catch (e) {
+            console.log('Error during unload cleanup:', e);
+        }
+    });
 })();
