@@ -6,6 +6,8 @@
     let batchEvents = [];
     let reconnectAttempts = 0;
     const MAX_RECONNECT_ATTEMPTS = 3;
+    let processedBatchEvents = new Map();
+	let lastBatchTimestamp = 0;
 
     // Safe localStorage access
     function safeGetLocalStorage() {
@@ -52,41 +54,42 @@
     }
 
     // Process localStorage items
-    function processLocalStorageItems() {
-        if (!isExtensionActive) return null;
-        
-        try {
-            const items = safeGetLocalStorage();
-            
-            // Add batch events if available
-            if (batchEvents.length > 0) {
-                batchEvents.forEach((event, index) => {
-                    const key = `batch_event_${index}`;
-                    items[key] = {
-                        value: JSON.stringify(event),
-                        parsedValue: event,
-                        originalKey: event.event || 'Batch Event',
-                        propertiesKey: event.properties || null,
-                        timestamp: event.timestamp || Date.now(),
-                        isBatchEvent: true
-                    };
-                });
-            }
-            
-            const currentStateStr = JSON.stringify(items);
-            const lastStateStr = JSON.stringify(lastProcessedState);
-            
-            if (currentStateStr !== lastStateStr) {
-                lastProcessedState = items;
-                return items;
-            }
-            
-            return null;
-        } catch (e) {
-            console.error('Error processing items:', e);
-            return null;
-        }
-    }
+	function processLocalStorageItems() {
+		if (!isExtensionActive) return null;
+		
+		try {
+			const items = safeGetLocalStorage();
+			
+			// Add batch events if available
+			if (batchEvents.length > 0) {
+				batchEvents.forEach((event, index) => {
+					const eventKey = `batch_${event.event || event.type}_${lastBatchTimestamp}`;
+					
+					items[eventKey] = {
+						value: JSON.stringify(event),
+						parsedValue: event,
+						originalKey: event.event || 'Batch Event',
+						propertiesKey: event.properties || null,
+						timestamp: lastBatchTimestamp,
+						isBatchEvent: true
+					};
+				});
+			}
+			
+			const currentStateStr = JSON.stringify(items);
+			const lastStateStr = JSON.stringify(lastProcessedState);
+			
+			if (currentStateStr !== lastStateStr) {
+				lastProcessedState = items;
+				return items;
+			}
+			
+			return null;
+		} catch (e) {
+			console.error('Error processing items:', e);
+			return null;
+		}
+	}
 
     // Check changes and notify
     function checkAndNotifyChanges() {
@@ -186,6 +189,8 @@
             }
 
             batchEvents = [];
+            processedBatchEvents.clear();
+			lastBatchTimestamp = 0; 
             isExtensionActive = false;
             lastProcessedState = {};
 
@@ -206,32 +211,70 @@
             port = chrome.runtime.connect({ name: 'rudderstack-monitor' });
             
             port.onMessage.addListener((message) => {
-                try {
-                    if (message.type === 'batchRequest') {
-                        console.log('Batch data received:', message.data);
-                        batchEvents = message.data.map(event => ({
-                            ...event,
-                            timestamp: message.timestamp
-                        }));
-                        checkAndNotifyChanges();
-                    }
-                } catch (e) {
-                    console.log('Error in message listener:', e);
-                }
-            });
-			
-			port.onMessage.addListener((message) => {
 				try {
 					if (message.type === 'batchRequest') {
-						console.log('Batch data received:', message.data);
-						batchEvents = message.data.filter(event => !seenItems.has(event.key)).map(event => ({
-							...event,
-							timestamp: message.timestamp
-						}));
-						checkAndNotifyChanges();
+						// Check if this batch is newer than our last processed batch
+						if (message.timestamp <= lastBatchTimestamp) {
+							console.log('Skipping older or duplicate batch:', {
+								currentTimestamp: message.timestamp,
+								lastProcessedTimestamp: lastBatchTimestamp
+							});
+							return;
+						}
+
+						console.log('Raw Batch data received:', {
+							type: message.type,
+							timestamp: message.timestamp,
+							dataLength: message.data?.length || 0
+						});
+
+						// Update last batch timestamp
+						lastBatchTimestamp = message.timestamp;
+						
+						// Process new batch events
+						const newBatchEvents = [];
+						
+						message.data.forEach(event => {
+							const eventKey = event.event || event.type;
+							const existingEvent = processedBatchEvents.get(eventKey);
+							
+							if (!existingEvent || existingEvent.timestamp < message.timestamp) {
+								newBatchEvents.push(event);
+								processedBatchEvents.set(eventKey, {
+									timestamp: message.timestamp,
+									key: eventKey
+								});
+								console.log('Processing batch event:', {
+									type: eventKey,
+									timestamp: message.timestamp
+								});
+							}
+						});
+
+						if (newBatchEvents.length > 0) {
+							batchEvents = newBatchEvents.map(event => ({
+								...event,
+								timestamp: message.timestamp
+							}));
+							
+							console.log('New batch events to be displayed:', 
+								batchEvents.map(event => ({
+									type: event.event || event.type,
+									timestamp: event.timestamp
+								}))
+							);
+							checkAndNotifyChanges();
+						} else {
+							console.log('No new events to process in this batch');
+						}
 					}
 				} catch (e) {
-					console.log('Error in message listener:', e);
+					console.error('Error processing batch events:', {
+						error: e.message,
+						stack: e.stack,
+						messageType: message?.type,
+						messageData: JSON.stringify(message?.data, null, 2)
+					});
 				}
 			});
 
@@ -252,6 +295,16 @@
             cleanup();
         }
     }
+
+    // Cleanup old processed events periodically
+    setInterval(() => {
+        const now = Date.now();
+        for (const [key, data] of processedBatchEvents.entries()) {
+            if (now - data.timestamp > 5000) {
+                processedBatchEvents.delete(key);
+            }
+        }
+    }, 5000);
 
     // Initialize
     try {

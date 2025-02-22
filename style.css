@@ -234,22 +234,16 @@ body.sidepanel {
 .batch-badge {
     background-color: #ff6b6b;
     color: white;
-    padding: 2px 4px;
+    padding: 0 4px;
     border-radius: 4px;
     font-size: 8px;
-	float: right;
+    margin-left: 5px;
 }
 
 .timestamp {
     color: #666;
     font-size: 12px;
 }
-/*
-.key-container {
-    display: flex;
-    align-items: center;
-    flex-grow: 1;
-}*/
 
 /* Key Container */
 .key-container {
@@ -258,6 +252,9 @@ body.sidepanel {
     gap: var(--spacing-xs);
     flex-grow: 1;
     padding-right: var(--spacing-md);
+	overflow:hidden; 
+    white-space:nowrap; 
+    text-overflow: ellipsis;
 }
 
 .subtitle {

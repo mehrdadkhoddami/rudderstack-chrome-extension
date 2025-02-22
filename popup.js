@@ -81,7 +81,7 @@ const getLocalStorageCode = () => {
 function createSentBadge() {
     const sentBadge = document.createElement('span');
     sentBadge.className = 'sent-badge';
-    sentBadge.textContent = 'sent';
+    sentBadge.textContent = 'SENT';
     return sentBadge;
 }
 
@@ -341,21 +341,21 @@ function createItemElement(key, data = {}, isSent = false) {  // default empty o
     badgesContainer.className = 'badges-container';
     
     // Add sent badge if item is sent
-    if (isSent) {
+    if (isSent || data.isBatchEvent) {
         badgesContainer.appendChild(createSentBadge());
+    }
+    
+    // Add timestamp if available
+    if (data.timestamp) {
+        const timeDiv = document.createElement('span');
+        timeDiv.className = 'timestamp';
+        timeDiv.textContent = new Date(data.timestamp).toLocaleTimeString();
+        badgesContainer.appendChild(timeDiv);
     }
     
     // Add batch badge if it's a batch event
     if (data.isBatchEvent) {
         badgesContainer.appendChild(createBatchBadge());
-    }
-    
-    // Add timestamp if available
-    if (data.timestamp) {
-        const timeDiv = document.createElement('div');
-        timeDiv.className = 'timestamp';
-        timeDiv.textContent = new Date(data.timestamp).toLocaleTimeString();
-        badgesContainer.appendChild(timeDiv);
     }
     
     const toggleIcon = document.createElement('span');
