@@ -219,6 +219,21 @@
                     console.log('Error in message listener:', e);
                 }
             });
+			
+			port.onMessage.addListener((message) => {
+				try {
+					if (message.type === 'batchRequest') {
+						console.log('Batch data received:', message.data);
+						batchEvents = message.data.filter(event => !seenItems.has(event.key)).map(event => ({
+							...event,
+							timestamp: message.timestamp
+						}));
+						checkAndNotifyChanges();
+					}
+				} catch (e) {
+					console.log('Error in message listener:', e);
+				}
+			});
 
             port.onDisconnect.addListener(() => {
                 try {

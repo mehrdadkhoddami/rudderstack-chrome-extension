@@ -11,6 +11,13 @@
  * Changelog:
  * - v1.0.6: Initial version 
  */
+ 
+
+// Store all seen items and current localStorage items
+let seenItems = new Map();
+let currentStorageItems = new Map();
+let isFirstLoad = true;
+let recentlyAddedItems = new Map();
 
 function getCurrentTabId(callback) {
     try {
@@ -78,11 +85,6 @@ function createSentBadge() {
     return sentBadge;
 }
 
-// Store all seen items and current localStorage items
-let seenItems = new Map();
-let currentStorageItems = new Map();
-let isFirstLoad = true;
-
 function getCurrentTabId(callback) {
     chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
         callback(tabs[0].id);
@@ -139,6 +141,8 @@ function clearAllItems(tabId) {
     // Reset data structures
     seenItems.clear();
     currentStorageItems.clear();
+	batchEvents = []; 
+	recentlyAddedItems = new Map();
 
     // Clear storage
     chrome.storage.local.remove([
@@ -301,6 +305,8 @@ function createItemElement(key, data = {}, isSent = false) {  // default empty o
     
     const itemDiv = document.createElement('div');
     itemDiv.className = 'item';
+	itemDiv.setAttribute('data-key', key);
+	
     if (isSent) {
         itemDiv.classList.add('sent-item');
     }
@@ -428,6 +434,7 @@ function createBatchBadge() {
 }
 
 // Main function to display results
+
 function displayResults(results) {
     if (!results || !results[0]) return;
 
@@ -435,12 +442,32 @@ function displayResults(results) {
     const container = document.getElementById('localStorage-items');
 
     getCurrentTabId((tabId) => {
+        // Skip invalid or unwanted items
+        const filteredItems = Object.entries(currentItems || {}).filter(([key, data]) => {
+            if (
+                (data.originalKey === 'source' || key === 'source') && 
+                (!data.propertiesKey || data.propertiesKey === undefined)
+            ) {
+                console.log('Skipping source item:', { key, data });
+                return false;
+            }
+            return true;
+        });
+
         // If it's first load and we have stored items, display them
         if (isFirstLoad && seenItems.size > 0) {
             container.innerHTML = '';
 
-            // Display stored items
             [...seenItems.entries()]
+                .filter(([key, data]) => {
+                    if (
+                        (data.originalKey === 'source' || key === 'source') && 
+                        (!data.propertiesKey || data.propertiesKey === undefined)
+                    ) {
+                        return false;
+                    }
+                    return true;
+                })
                 .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0))
                 .forEach(([key, data]) => {
                     const itemElement = createItemElement(key, data);
@@ -455,9 +482,24 @@ function displayResults(results) {
             [el.querySelector('.key').textContent, el]
         ));
 
+        // Clean up old entries from recentlyAddedItems
+        const now = Date.now();
+		const newRecentItems = new Map();
+		for (const [key, timestamp] of recentlyAddedItems.entries()) {
+			if (now - timestamp <= 3000) {
+				newRecentItems.set(key, timestamp);
+			}
+		}
+		recentlyAddedItems = newRecentItems;
+
         // Check for new items and mark removed ones
-        for (const [key, data] of Object.entries(currentItems)) {
-            // Check if item is truly new (not in seenItems AND not in currentStorageItems)
+        for (const [key, data] of filteredItems) {
+            // Skip if the item was recently added
+            if (recentlyAddedItems.has(key)) {
+                continue;
+            }
+
+            // Check if item is truly new
             if (!seenItems.has(key) && !currentStorageItems.has(key)) {
                 seenItems.set(key, {
                     ...data,
@@ -469,32 +511,27 @@ function displayResults(results) {
                     [`seenItemsData_${tabId}`]: JSON.stringify([...seenItems])
                 });
 
-                // Add new item with animation
-                Array.from(container.children).forEach(child => {
-                    child.classList.add('shifting-down');
-                });
+                // Add to recently added items
+                recentlyAddedItems.set(key, Date.now());
 
+                // Animate only this new item
+                const itemElement = createItemElement(key, data);
+                itemElement.classList.add('new-item');
+
+                if (container.firstChild) {
+                    container.insertBefore(itemElement, container.firstChild);
+                } else {
+                    container.appendChild(itemElement);
+                }
+
+                // Remove animation classes after delay
                 setTimeout(() => {
-                    Array.from(container.children).forEach(child => {
-                        child.classList.remove('shifting-down');
-                    });
-
-                    const itemElement = createItemElement(key, data);
-                    itemElement.classList.add('new-item');
-
-                    if (container.firstChild) {
-                        container.insertBefore(itemElement, container.firstChild);
-                    } else {
-                        container.appendChild(itemElement);
-                    }
-
+                    itemElement.classList.add('transition-complete');
                     setTimeout(() => {
-                        itemElement.classList.add('transition-complete');
-                        setTimeout(() => {
-                            itemElement.classList.remove('new-item', 'transition-complete');
-                        }, 300);
-                    }, 3000);
-                }, 500);
+                        itemElement.classList.remove('new-item', 'transition-complete');
+                    }, 300);
+                }, 3000);
+
             } else if (existingElements.has(key)) {
                 const itemElement = existingElements.get(key);
                 const valueElement = itemElement.querySelector('.value');
@@ -508,10 +545,18 @@ function displayResults(results) {
 
                 existingElements.delete(key);
             }
+
+            currentStorageItems.set(key, data);
         }
 
+        // Save current storage items
+        chrome.storage.local.set({
+            [`currentStorageItems_${tabId}`]: JSON.stringify([...currentStorageItems])
+        });
+
+        // Mark remaining items as sent
         existingElements.forEach((element, key) => {
-            if (!element.classList.contains('sent-item')) {
+            if (!element.classList.contains('sent-item') && !recentlyAddedItems.has(key)) {
                 element.classList.add('sent-item');
                 const keyContainer = element.querySelector('.key-container');
                 if (!keyContainer.querySelector('.sent-badge')) {
@@ -519,6 +564,18 @@ function displayResults(results) {
                 }
             }
         });
+
+        // Cleanup old items from recentlyAddedItems after 3 seconds
+        setTimeout(() => {
+			const now = Date.now();
+			const validItems = new Map();
+			for (const [key, timestamp] of recentlyAddedItems.entries()) {
+				if (now - timestamp <= 3000) {
+					validItems.set(key, timestamp);
+				}
+			}
+			recentlyAddedItems = validItems;
+		}, 3000);
     });
 }
 
