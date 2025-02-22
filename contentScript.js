@@ -8,6 +8,39 @@
     const MAX_RECONNECT_ATTEMPTS = 3;
     let processedBatchEvents = new Map();
 	let lastBatchTimestamp = 0;
+	
+	// Add message listener at the top level of your IIFE
+	chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+		if (message.type === 'clearAll' && message.clearBatch) {
+			console.log('Received clearAll command with batch clear');
+			clearAllData();
+			sendResponse({ success: true });
+		}
+		return true;
+	});
+	
+	function clearAllData() {
+		try {
+			// Clear all batch-related data
+			batchEvents = [];
+			processedBatchEvents.clear();
+			lastBatchTimestamp = 0;
+			lastProcessedState = {};
+			
+			// Clear any existing intervals
+			if (monitoringInterval) {
+				clearInterval(monitoringInterval);
+				monitoringInterval = null;
+			}
+
+			console.log('Cleared all batch data and tracking structures');
+			
+			// Restart monitoring with fresh state
+			setupMonitoring();
+		} catch (e) {
+			console.error('Error in clearAllData:', e);
+		}
+	}
 
     // Safe localStorage access
     function safeGetLocalStorage() {
@@ -213,6 +246,11 @@
             port.onMessage.addListener((message) => {
 				try {
 					if (message.type === 'batchRequest') {
+						 //cleared state
+						if (lastBatchTimestamp === 0) {
+							console.log('Processing batch after clear');
+							processedBatchEvents.clear(); // Ensure clean slate
+						}
 						// Check if this batch is newer than our last processed batch
 						if (message.timestamp <= lastBatchTimestamp) {
 							console.log('Skipping older or duplicate batch:', {

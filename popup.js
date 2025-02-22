@@ -141,14 +141,29 @@ function clearAllItems(tabId) {
     // Reset data structures
     seenItems.clear();
     currentStorageItems.clear();
-	batchEvents = []; 
-	recentlyAddedItems = new Map();
+    batchEvents = [];
+    recentlyAddedItems = new Map();
 
-    // Clear storage
+    // Clear storage with additional batch-related keys
     chrome.storage.local.remove([
         `seenItemsData_${tabId}`, 
-        `currentStorageItems_${tabId}`
+        `currentStorageItems_${tabId}`,
+        `lastBatchTimestamp_${tabId}` // Add this
     ]);
+
+    // Try to notify contentScript with specific batch clear flag
+    try {
+        chrome.tabs.sendMessage(tabId, { 
+            type: 'clearAll',
+            clearBatch: true  // Add this flag
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.log('ContentScript not ready or not found');
+            }
+        });
+    } catch (e) {
+        console.log('Error sending message to contentScript:', e);
+    }
 
     // Execute script to reset localStorage monitoring
     chrome.scripting.executeScript({
@@ -162,6 +177,16 @@ function clearAllItems(tabId) {
                     localStorage.removeItem(key);
                 }
             });
+            // Clear batch-related data in window
+            if (window.processedBatchEvents) {
+                window.processedBatchEvents.clear();
+            }
+            if (window.batchEvents) {
+                window.batchEvents = [];
+            }
+            if (window.lastBatchTimestamp !== undefined) {
+                window.lastBatchTimestamp = 0;
+            }
             return {};
         }
     }, () => {
@@ -181,26 +206,14 @@ function clearAllItems(tabId) {
             // Save fresh state to storage
             chrome.storage.local.set({
                 [`seenItemsData_${tabId}`]: JSON.stringify([...seenItems]),
-                [`currentStorageItems_${tabId}`]: JSON.stringify([...currentStorageItems])
+                [`currentStorageItems_${tabId}`]: JSON.stringify([...currentStorageItems]),
+                [`lastBatchTimestamp_${tabId}`]: 0  // Reset batch timestamp
             });
 
             // Reset first load flag
             isFirstLoad = false;
         });
     });
-
-    // Try to notify contentScript if it exists
-    try {
-        chrome.tabs.sendMessage(tabId, { 
-            type: 'clearAll' 
-        }, (response) => {
-            if (chrome.runtime.lastError) {
-                console.log('ContentScript not ready or not found');
-            }
-        });
-    } catch (e) {
-        console.log('Error sending message to contentScript:', e);
-    }
 
     // Add button animation
     const button = document.getElementById('clearButton');
