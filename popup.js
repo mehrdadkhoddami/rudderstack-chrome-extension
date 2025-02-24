@@ -1,5 +1,5 @@
 /*!
- * RudderStack LocalStorage Viewer
+ * RudderStack Tracker chrome Extension
  * 
  * 1st versions Developed by: Mehrdad Khoddami (khoddami.me@gmail.com) (mehrdad.khoddami@zoodfood.com)
  * Initial Version: January 13, 2025
@@ -9,7 +9,7 @@
  * License: MIT
  * 
  * Changelog:
- * - v1.0.6: Initial version 
+ * - v1.0.10: Initial version 
  */
  
 
