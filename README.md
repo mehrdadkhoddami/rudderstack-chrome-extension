@@ -46,29 +46,28 @@ This extension was initially developed with the help of **ChatGPT** and **Claude
 
 ## Known Issues & Possible Improvements
 
-### 1. Missing the 10th Event (Batch Completer)
-- Since the extension reads from **Local Storage**, the **10th event**, which completes a batch, does not get stored in Local Storage and is therefore missing in the extension.
-- A potential fix is to **catch outgoing batch requests** and extract the missing event from there. However, implementing this requires additional work beyond the current scope.
-
-### 2. List Updates in Popup
+### 1. List Updates in Popup
 - The event list updates only while the **popup is open**.
 - A possible solution is to use a **Service Worker** and `background.js` to keep the event list updated even when the popup is closed.
 
-### 3. Shared Data Across Multiple Tabs
+### 2. Shared Data Across Multiple Tabs
 - Since **Local Storage is shared across all tabs** of the same website, if multiple tabs are open, the displayed data may be mixed.
 - The current implementation includes tab-specific data handling, but further improvements could be made for more precise tab isolation
 
-### 4. Framework Compatibility
+
+## Improvements
+
+### 1. Framework Compatibility
 - While the extension now handles modern frameworks better, some edge cases might still exist
 - Continuous testing with different framework versions is recommended
 
-### 5. Extension Context Handling
+### 2. Extension Context Handling
 - The extension now includes improved handling of context invalidation
 - Features automatic recovery from context losses
 - Implements proper cleanup on context changes
 - Includes detailed error logging for debugging
 
-### 6. Connection Management
+### 3. Connection Management
 - Enhanced port-based communication system
 - Implements intelligent reconnection strategy
 - Features exponential backoff for reconnection attempts

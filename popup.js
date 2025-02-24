@@ -30,7 +30,7 @@ function applyFilter() {
 		let subtitleEl = item.querySelector(".key-container .subtitle");
 		let keyEl = item.querySelector(".key-container .key");
 			if (!subtitleEl || !keyEl) {
-			console.log(`Skipping index ${index} due to missing elements.`);
+			console.log(`Skipping index ${subtitleEl} due to missing elements.`);
 			return;
 		}
 	
@@ -386,7 +386,7 @@ function createItemElement(key, data = {}, isSent = false) {  // default empty o
     
     // Safe check for rudder_batch
     if (typeof originalKey === 'string' && originalKey.startsWith('rudder_batch')) {
-        subtitleDiv.className = 'subtitle-type2';
+        subtitleDiv.className = 'subtitle subtitle-type2';
     }
     
     // Add badges container
