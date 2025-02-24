@@ -17,7 +17,47 @@
 let seenItems = new Map();
 let currentStorageItems = new Map();
 let isFirstLoad = true;
-let recentlyAddedItems = new Map();
+let recentlyAddedItems = new Map();const filterInput = document.getElementById("filter-input");
+const clearBtn = document.getElementById("clear-btn");
+const itemList = document.getElementById("localStorage-items");
+
+function applyFilter() {
+    let filterValue = filterInput.value.toLowerCase();
+    let items = document.querySelectorAll("#localStorage-items .item");
+
+    clearBtn.style.display = filterValue ? "block" : "none";
+    items.forEach(item => {
+		let subtitleEl = item.querySelector(".key-container .subtitle");
+		let keyEl = item.querySelector(".key-container .key");
+			if (!subtitleEl || !keyEl) {
+			console.log(`Skipping index ${index} due to missing elements.`);
+			return;
+		}
+	
+        let subtitle = subtitleEl.textContent.toLowerCase();
+        let key = keyEl.textContent.toLowerCase();
+        
+        if (subtitle.includes(filterValue) || key.includes(filterValue)) {
+            item.classList.remove("hidden");
+        } else {
+            item.classList.add("hidden");
+        }
+    });
+}
+
+filterInput.addEventListener("input", applyFilter);
+
+clearBtn.addEventListener("click", function () {
+    filterInput.value = "";
+    clearBtn.style.display = "none";
+    applyFilter(); // بعد از پاک شدن، همه آیتم‌ها دوباره نمایش داده شوند
+});
+
+const observer = new MutationObserver(() => {
+    applyFilter();
+});
+
+observer.observe(itemList, { childList: true, subtree: true });
 
 function getCurrentTabId(callback) {
     try {
@@ -628,7 +668,11 @@ function createTableFromJson(json) {
 			if (value === null) {
 				valueCell.textContent = 'null';
 			} else {
-				valueCell.textContent = value;
+				try {
+					valueCell.textContent = decodeURIComponent(value);
+				} catch (e) {
+					console.error(e);
+				}
 			}
         }
         row.appendChild(valueCell);

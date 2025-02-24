@@ -137,6 +137,52 @@ body.sidepanel {
     background: var(--primary-color);
 }
 
+.filter-container {
+	position: relative;
+	width: 100%;
+    contain: inline-size;
+    margin: 0 10px 0 0;
+	flex-grow: 1;
+	display: flex;
+}
+
+#filter-input {
+	font-size: 14px;
+	border: 1px solid #ccc;
+	border-radius: var(--radius-md);
+	outline: none;
+    max-width: 100%;
+    flex-grow: 1;
+	margin: 2px 0;
+    padding: 6px 30px 6px 6px;
+}
+
+.clear-btn {
+	position: absolute;
+	right: 10px;
+	top: 50%;
+	transform: translateY(-50%);
+	background: #f44336;
+	color: white;
+	border: none;
+	width: 20px;
+	height: 20px;
+	line-height: 20px;
+	text-align: center;
+	border-radius: 50%;
+	cursor: pointer;
+	font-size: 14px;
+	display: none;
+}
+
+.clear-btn:hover {
+	background: #d32f2f;
+}
+
+.hidden {
+	display: none;
+}
+
 /* Item Styles */
 .item {
     position: relative;
@@ -387,7 +433,8 @@ pre.value {
     margin-bottom: var(--spacing-sm);
     z-index: 100;
     display: flex;
-    justify-content: flex-end;
+	justify-content: space-between;
+	 align-items: center;
 }
 
 .clear-button {
@@ -402,6 +449,7 @@ pre.value {
     cursor: pointer;
     transition: var(--transition);
     font-size: 14px;
+	min-width: 110px
 }
 
 .clear-button:hover {
