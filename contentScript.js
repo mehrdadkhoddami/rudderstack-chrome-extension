@@ -353,12 +353,12 @@
         console.log('Error during initialization:', e);
     }
 
-    // Cleanup on unload
-    window.addEventListener('unload', () => {
-        try {
-            cleanup();
-        } catch (e) {
-            console.log('Error during unload cleanup:', e);
-        }
-    });
+	// Cleanup on beforeunload
+	window.addEventListener('beforeunload', () => {
+		try {
+			cleanup();
+		} catch (e) {
+			console.log('Error during beforeunload cleanup:', e);
+		}
+	});
 })();
