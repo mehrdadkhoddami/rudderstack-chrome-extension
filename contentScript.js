@@ -59,13 +59,16 @@
                     try {
                         const parsedL1 = JSON.parse(value);
                         const parsedJson = JSON.parse(parsedL1);
-                        items[key] = {
-                            value: value,
-                            parsedValue: parsedJson,
-                            originalKey: parsedJson.event || key,
-                            propertiesKey: parsedJson.hasOwnProperty('properties') ? parsedJson.properties : null,
-                            timestamp: Date.now()
-                        };
+                        // Check if the event type is either 'track' or 'page'
+                        if (parsedJson.type === 'track' || parsedJson.type === 'page') {
+                            items[key] = {
+                                value: value,
+                                parsedValue: parsedJson,
+                                originalKey: parsedJson.event || key,
+                                propertiesKey: parsedJson.hasOwnProperty('properties') ? parsedJson.properties : null,
+                                timestamp: Date.now()
+                            };
+                        }
                     } catch (parseError) {
                         items[key] = {
                             value: value,
@@ -96,16 +99,19 @@
 			// Add batch events if available
 			if (batchEvents.length > 0) {
 				batchEvents.forEach((event, index) => {
-					const eventKey = `batch_${event.event || event.type}_${lastBatchTimestamp}`;
-					
-					items[eventKey] = {
-						value: JSON.stringify(event),
-						parsedValue: event,
-						originalKey: event.event || 'Batch Event',
-						propertiesKey: event.properties || null,
-						timestamp: lastBatchTimestamp,
-						isBatchEvent: true
-					};
+					// Only process track and page events
+					if (event.type === 'track' || event.type === 'page') {
+						const eventKey = `batch_${event.event || event.type}_${lastBatchTimestamp}`;
+						
+						items[eventKey] = {
+							value: JSON.stringify(event),
+							parsedValue: event,
+							originalKey: event.event || 'Batch Event',
+							propertiesKey: event.properties || null,
+							timestamp: lastBatchTimestamp,
+							isBatchEvent: true
+						};
+					}
 				});
 			}
 			
