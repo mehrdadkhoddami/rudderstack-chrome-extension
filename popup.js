@@ -634,11 +634,10 @@ function displayResults(results) {
 
 
 function createTableFromJson(json) {
-    // Create the table element
     const table = document.createElement('table');
     table.className = 'json-table';
 
-    // Create table header
+    // Table header
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
     const keyHeader = document.createElement('th');
@@ -650,39 +649,41 @@ function createTableFromJson(json) {
     thead.appendChild(headerRow);
     table.appendChild(thead);
 
-    // Create table body
+    // Table body
     const tbody = document.createElement('tbody');
-    for (const [key, value] of Object.entries(json)) {
+    const sortedEntries = Object.entries(json).sort((a, b) => a[0].localeCompare(b[0]));
+    
+    for (const [key, value] of sortedEntries) {
         const row = document.createElement('tr');
 
-        // Create key cell
         const keyCell = document.createElement('td');
         keyCell.textContent = key;
         row.appendChild(keyCell);
 
-        // Create value cell
         const valueCell = document.createElement('td');
         if (typeof value === 'object' && value !== null) {
             valueCell.textContent = JSON.stringify(value, null, 2);
         } else {
-			if (value === null) {
-				valueCell.textContent = 'null';
-			} else {
-				try {
-					valueCell.textContent = decodeURIComponent(value);
-				} catch (e) {
-					console.error(e);
-				}
-			}
+            if (value === null) {
+                valueCell.textContent = 'null';
+            } else {
+                try {
+                    valueCell.textContent = decodeURIComponent(value);
+                } catch (e) {
+                    console.error(e);
+                    valueCell.textContent = value;
+                }
+            }
         }
-        row.appendChild(valueCell);
 
+        row.appendChild(valueCell);
         tbody.appendChild(row);
     }
-    table.appendChild(tbody);
 
+    table.appendChild(tbody);
     return table;
 }
+
 
 
 // Function to create a Toast message
