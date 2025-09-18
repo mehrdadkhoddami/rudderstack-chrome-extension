@@ -222,7 +222,7 @@ body.sidepanel {
     border-top-left-radius: 0px;
     background-color: var(--sent-background);
     color: white;
-    padding: 2px 4px;
+    padding: 1px 2px;
     font-size: 8px;
     letter-spacing: 1px;
     opacity: 1;
@@ -231,6 +231,8 @@ body.sidepanel {
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 	width: 30px;
     text-align: center;
+	width: 35px;
+    box-sizing: border-box;
 }
 
 

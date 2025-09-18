@@ -276,11 +276,11 @@
 							return;
 						}
 
-						console.log('Raw Batch data received:', {
+						/*console.log('Raw Batch data received:', {
 							type: message.type,
 							timestamp: message.timestamp,
 							dataLength: message.data?.length || 0
-						});
+						});*/
 
 						// Update last batch timestamp
 						lastBatchTimestamp = message.timestamp;
@@ -298,10 +298,10 @@
 									timestamp: message.timestamp,
 									key: eventKey
 								});
-								console.log('Processing batch event:', {
+								/*console.log('Processing batch event:', {
 									type: eventKey,
 									timestamp: message.timestamp
-								});
+								});*/
 							}
 						});
 
@@ -311,12 +311,12 @@
 								timestamp: message.timestamp
 							}));
 							
-							console.log('New batch events to be displayed:', 
+							/*console.log('New batch events to be displayed:', 
 								batchEvents.map(event => ({
 									type: event.event || event.type,
 									timestamp: event.timestamp
 								}))
-							);
+							);*/
 							checkAndNotifyChanges();
 						} else {
 							console.log('No new events to process in this batch');

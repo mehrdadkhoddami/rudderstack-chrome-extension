@@ -79,8 +79,9 @@ function getCurrentTabId(callback) {
 }
 
 // Function that will be injected into the page to get localStorage items
+// Function that will be injected into the page to get localStorage items
 const getLocalStorageCode = () => {
-    return function () {
+    return function safeGetLocalStorage() {
         try {
             const items = {};
             if (!localStorage) return items;
@@ -88,7 +89,7 @@ const getLocalStorageCode = () => {
             for (let i = 0; i < localStorage.length; i++) {
                 try {
                     const key = localStorage.key(i);
-					if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
+                    if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
 
                     const value = localStorage.getItem(key);
                     if (!value) continue;
@@ -96,25 +97,23 @@ const getLocalStorageCode = () => {
                     try {
                         const parsedL1 = JSON.parse(value);
                         const parsedJson = JSON.parse(parsedL1);
-						for (var j in parsedJson) {
-							if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
-							const currentItem = parsedJson[j].item.event
-							
-							if (currentItem.type === 'track' || currentItem.type === 'page') {
-								const currentKey = parsedJson[j].item.event.messageId
-								items[currentKey] = {
-									value: value,
-									parsedValue: currentItem,
-									originalKey: currentItem.event || currentKey,
-									propertiesKey: currentItem.hasOwnProperty('properties') ? currentItem.properties : null,
-									timestamp: Date.now()
-								};
-							}
-						}
-						
-					
-                        // Check if the event type is either 'track' or 'page'
 
+                        for (let j in parsedJson) {
+                            if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
+
+                            const currentItem = parsedJson[j].item.event;
+
+                            if (currentItem.type === 'track' || currentItem.type === 'page') {
+                                const currentKey = currentItem.messageId || key;
+                                items[currentKey] = {
+                                    value: value,
+                                    parsedValue: currentItem,
+                                    originalKey: currentItem.event || currentKey,
+                                    propertiesKey: currentItem.hasOwnProperty('properties') ? currentItem.properties : null,
+                                    timestamp: Date.now()
+                                };
+                            }
+                        }
                     } catch (parseError) {
                         items[key] = {
                             value: value,
@@ -128,13 +127,15 @@ const getLocalStorageCode = () => {
                     continue;
                 }
             }
+
             return items;
         } catch (e) {
             console.warn('Error accessing localStorage:', e);
             return {};
         }
-    }
+    };
 };
+
 
 function createSentBadge() {
     const sentBadge = document.createElement('span');
@@ -441,7 +442,7 @@ function createItemElement(key, data = {}, isSent = false) {  // default empty o
     
     const propertiesDiv = document.createElement('div');
     propertiesDiv.className = 'properties-value';
-    propertiesDiv.textContent = '';
+    propertiesDiv.textContent = 'Properties:';
     
     const insideValueContainer = document.createElement('div');
     insideValueContainer.className = 'inside-value-container';
@@ -650,6 +651,15 @@ function displayResults(results) {
     });
 }
 
+function safeDecode(value) {
+    try {
+        return decodeURIComponent(value);
+    } catch (e) {
+        return value;
+        console.warn("Invalid URI component:", value);
+    }
+}
+
 
 function createTableFromJson(json) {
     const table = document.createElement('table');
@@ -686,7 +696,7 @@ function createTableFromJson(json) {
                 valueCell.textContent = 'null';
             } else {
                 try {
-                    valueCell.textContent = decodeURIComponent(value);
+                    valueCell.textContent = safeDecode(value);
                 } catch (e) {
                     //console.error(e);
                     valueCell.textContent = value;
