@@ -80,25 +80,42 @@ function getCurrentTabId(callback) {
 
 // Function that will be injected into the page to get localStorage items
 const getLocalStorageCode = () => {
-    return function() {
+    return function () {
         try {
             const items = {};
-            const storage = { ...localStorage }; // Create a safe copy
-            
-            Object.keys(storage).forEach(key => {
-                if (key.startsWith('rudder_batch')) {
-                    const value = storage[key];
+            if (!localStorage) return items;
+
+            for (let i = 0; i < localStorage.length; i++) {
+                try {
+                    const key = localStorage.key(i);
+					if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
+
+                    const value = localStorage.getItem(key);
+                    if (!value) continue;
+
                     try {
                         const parsedL1 = JSON.parse(value);
                         const parsedJson = JSON.parse(parsedL1);
-                        items[key] = {
-                            value: value,
-                            parsedValue: parsedJson,
-                            originalKey: parsedJson.event || key,
-                            propertiesKey: parsedJson.hasOwnProperty('properties') ? parsedJson.properties : null,
-                            timestamp: Date.now()
-                        };
-                    } catch (e) {
+						for (var j in parsedJson) {
+							if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
+							const currentItem = parsedJson[j].item.event
+							
+							if (currentItem.type === 'track' || currentItem.type === 'page') {
+								const currentKey = parsedJson[j].item.event.messageId
+								items[currentKey] = {
+									value: value,
+									parsedValue: currentItem,
+									originalKey: currentItem.event || currentKey,
+									propertiesKey: currentItem.hasOwnProperty('properties') ? currentItem.properties : null,
+									timestamp: Date.now()
+								};
+							}
+						}
+						
+					
+                        // Check if the event type is either 'track' or 'page'
+
+                    } catch (parseError) {
                         items[key] = {
                             value: value,
                             parsedValue: null,
@@ -107,15 +124,16 @@ const getLocalStorageCode = () => {
                             timestamp: Date.now()
                         };
                     }
+                } catch (itemError) {
+                    continue;
                 }
-            });
-            
+            }
             return items;
         } catch (e) {
-            console.error('Error processing localStorage:', e);
+            console.warn('Error accessing localStorage:', e);
             return {};
         }
-    };
+    }
 };
 
 function createSentBadge() {
@@ -402,7 +420,7 @@ function createItemElement(key, data = {}, isSent = false) {  // default empty o
     if (data.timestamp) {
         const timeDiv = document.createElement('span');
         timeDiv.className = 'timestamp';
-        timeDiv.textContent = new Date(data.timestamp).toLocaleTimeString();
+        timeDiv.textContent = new Date(data.timestamp).toLocaleTimeString('en-GB', { hour12: false });
         badgesContainer.appendChild(timeDiv);
     }
     
@@ -423,7 +441,7 @@ function createItemElement(key, data = {}, isSent = false) {  // default empty o
     
     const propertiesDiv = document.createElement('div');
     propertiesDiv.className = 'properties-value';
-    propertiesDiv.textContent = 'Properties:';
+    propertiesDiv.textContent = '';
     
     const insideValueContainer = document.createElement('div');
     insideValueContainer.className = 'inside-value-container';
@@ -670,7 +688,7 @@ function createTableFromJson(json) {
                 try {
                     valueCell.textContent = decodeURIComponent(value);
                 } catch (e) {
-                    console.error(e);
+                    //console.error(e);
                     valueCell.textContent = value;
                 }
             }

@@ -53,7 +53,6 @@
                     const key = localStorage.key(i);
 					if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
 
-
                     const value = localStorage.getItem(key);
                     if (!value) continue;
 
@@ -62,11 +61,10 @@
                         const parsedJson = JSON.parse(parsedL1);
 						for (var j in parsedJson) {
 							if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
-							
-							var currentItem = parsedJson[j].item.event
+							const currentItem = parsedJson[j].item.event
 							
 							if (currentItem.type === 'track' || currentItem.type === 'page') {
-								var currentKey = parsedJson[j].item.event.messageId
+								const currentKey = parsedJson[j].item.event.messageId
 								items[currentKey] = {
 									value: value,
 									parsedValue: currentItem,
@@ -76,7 +74,6 @@
 								};
 							}
 						}
-						
 						
 					
                         // Check if the event type is either 'track' or 'page'
@@ -113,7 +110,8 @@
 				batchEvents.forEach((event, index) => {
 					// Only process track and page events
 					if (event.type === 'track' || event.type === 'page') {
-						const eventKey = `batch_${event.event || event.type}_${lastBatchTimestamp}`;
+						const eventKey = event.messageId
+						//const eventKey = `batch____${event.event || event.type}_${lastBatchTimestamp}`;
 						
 						items[eventKey] = {
 							value: JSON.stringify(event),
