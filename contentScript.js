@@ -51,7 +51,8 @@
             for (let i = 0; i < localStorage.length; i++) {
                 try {
                     const key = localStorage.key(i);
-                    if (!key || !key.startsWith('rudder_batch')) continue;
+					if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
+
 
                     const value = localStorage.getItem(key);
                     if (!value) continue;
@@ -59,16 +60,27 @@
                     try {
                         const parsedL1 = JSON.parse(value);
                         const parsedJson = JSON.parse(parsedL1);
+						for (var j in parsedJson) {
+							if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
+							
+							var currentItem = parsedJson[j].item.event
+							
+							if (currentItem.type === 'track' || currentItem.type === 'page') {
+								var currentKey = parsedJson[j].item.event.messageId
+								items[currentKey] = {
+									value: value,
+									parsedValue: currentItem,
+									originalKey: currentItem.event || currentKey,
+									propertiesKey: currentItem.hasOwnProperty('properties') ? currentItem.properties : null,
+									timestamp: Date.now()
+								};
+							}
+						}
+						
+						
+					
                         // Check if the event type is either 'track' or 'page'
-                        if (parsedJson.type === 'track' || parsedJson.type === 'page') {
-                            items[key] = {
-                                value: value,
-                                parsedValue: parsedJson,
-                                originalKey: parsedJson.event || key,
-                                propertiesKey: parsedJson.hasOwnProperty('properties') ? parsedJson.properties : null,
-                                timestamp: Date.now()
-                            };
-                        }
+
                     } catch (parseError) {
                         items[key] = {
                             value: value,
