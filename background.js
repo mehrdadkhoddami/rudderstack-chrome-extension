@@ -62,3 +62,19 @@ chrome.runtime.onConnect.addListener((port) => {
         });
     }
 });
+
+// ✅ اضافه‌شده: باز کردن side panel وقتی روی آیکون کلیک میشه
+chrome.runtime.onInstalled.addListener(() => {
+    chrome.sidePanel.setOptions({
+        path: "sidepanel.html",
+        enabled: true
+    });
+});
+
+chrome.action.onClicked.addListener(async (tab) => {
+    try {
+        await chrome.sidePanel.open({ tabId: tab.id });
+    } catch (e) {
+        console.error("Error opening side panel:", e);
+    }
+});
