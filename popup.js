@@ -22,8 +22,8 @@ const clearBtn = document.getElementById("clear-btn");
 const itemList = document.getElementById("localStorage-items");
 
 const JSON_CLASSES = {
-    int: 'json-value',
-    float: 'json-value',
+    int: 'json-int',
+    float: 'json-float',
     boolean: 'json-boolean',
     null: 'json-null',
     string: 'json-string',
@@ -390,8 +390,9 @@ function renderValueSpan(value, addQuotes = true) {
     const parsed = parseValue(value);
     const type = detectType(parsed);
     let display;
+    let cssClass = JSON_CLASSES[type];
 
-    switch(type) {
+    switch (type) {
         case 'string':
             display = String(parsed);
             if (addQuotes) {
@@ -401,11 +402,15 @@ function renderValueSpan(value, addQuotes = true) {
         case 'null':
             display = 'null';
             break;
+        case 'boolean':
+            display = parsed; // true / false
+            cssClass = parsed === true ? 'json-boolean-true' : 'json-boolean-false';
+            break;
         default:
-            display = parsed; // int, float, boolean 
+            display = parsed; // int, float
     }
 
-    return `<span class="${JSON_CLASSES[type]}">${display}</span>`;
+    return `<span class="${cssClass}">${display}</span>`;
 }
 
 

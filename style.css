@@ -103,7 +103,7 @@ body {
     min-height: 600px;
     height: 100%;
     padding: var(--spacing-md);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+    font-family: -apple-system, "Vazirmatn", 'Segoe UI', Roboto, system-ui, sans-serif;
     margin: 0;
     background-color: var(--background-color);
     color: var(--text-primary);
@@ -410,41 +410,53 @@ pre.value {
 
 /* JSON Syntax Elements */
 .json-key {
-    color: brown;
+    color: #986801;
     font-weight: 600;
 }
 
-.json-value { /* int و float */
-    color: navy;
-}
-
 .json-string {
-    color: olive;
+  color: #3949AB;
 }
 
-.json-boolean {
-    color: mediumslateblue;
-    font-weight: bold;
+.json-int,
+.json-float {
+  color: #1E88E5;
+}
+
+.json-float {
+  /*color: #5E35B1;*/
+}
+
+.json-boolean-true {
+  color: #43A047;
+}
+
+.json-boolean-false {
+  color: #E53935;
 }
 
 .json-null {
-    color: gray;
-    font-style: italic;
+  color: #757575;
+  font-style: italic;
 }
 
-.json-object {
-    color: darkorange;
-}
-
+.json-object,
 .json-array {
-    color: darkmagenta;
+  color: #FB8C00;
 }
+
+
+
 
 /* Optional: table style */
 .json-table {
     border-collapse: collapse;
     font-family: monospace;
     width: 100%;
+}
+.json-table .json-string {
+    font-family: -apple-system, "Vazirmatn", 'Segoe UI', Roboto, system-ui, sans-serif;
+	font-size: 13px;
 }
 
 .json-table th, .json-table td {
@@ -598,6 +610,7 @@ pre.value {
 }
 
 
+.json-table th,
 .json-table td:nth-child(1) {
 	padding-left: 25px
 }
