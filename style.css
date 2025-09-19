@@ -1,7 +1,7 @@
 /* Root Variables */
 :root {
-    --primary-color: #1976d2;
-    --primary-light: #64b5f6;
+    --primary-color: #1927BC;
+    --primary-light: #575EFF;
     --secondary-color: #2196F3;
     --background-color: #ffffff;
     --surface-color: #f8f9fa;
@@ -279,7 +279,7 @@ body.sidepanel {
     left: 0;
     width: 3px;
     height: 100%;
-    background: linear-gradient(to right, var(--primary-color), var(--secondary-color));
+    background: linear-gradient(to right, var(--primary-color), var(--primary-light));
     opacity: 0;
     transition: var(--transition);
 }
@@ -326,6 +326,7 @@ body.sidepanel {
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
+	transition: var(--transition);
 }
 
 .subtitle-type2 {
@@ -374,9 +375,8 @@ body.sidepanel {
     opacity: 0.4;
 }
 
-.item-header:hover .view-more,
-.toggle-icon.collapsed:hover .view-more {
-	opacity: 0.8;
+.sent-item .item-header:hover .subtitle {
+	color: var(--primary-color);
 }
 
 
@@ -414,13 +414,45 @@ pre.value {
     font-weight: 600;
 }
 
-.json-value {
+.json-value { /* int و float */
     color: navy;
 }
 
 .json-string {
     color: olive;
 }
+
+.json-boolean {
+    color: mediumslateblue;
+    font-weight: bold;
+}
+
+.json-null {
+    color: gray;
+    font-style: italic;
+}
+
+.json-object {
+    color: darkorange;
+}
+
+.json-array {
+    color: darkmagenta;
+}
+
+/* Optional: table style */
+.json-table {
+    border-collapse: collapse;
+    font-family: monospace;
+    width: 100%;
+}
+
+.json-table th, .json-table td {
+    border: 1px solid #ccc;
+    padding: 4px 8px;
+    vertical-align: top;
+}
+
 
 .removed-indicator {
     background-color: #ff5252;
@@ -501,10 +533,6 @@ pre.value {
     }
 }
 
-.sent-item:hover {
-    opacity: 0.8;
-}
-
 .sent-item .key-container {
     color: var(--text-secondary);
 	padding-top: 1px;
@@ -546,6 +574,10 @@ pre.value {
 	color: #fff;
 }
 
+.json-table tr {
+	position: relative;
+}
+
 .json-table tr:nth-child(odd) {
     background-color: #f9f9f9; /* Light background for odd rows */
 }
@@ -555,7 +587,7 @@ pre.value {
 }
 
 .json-table tr:hover {
-    background-color: color-mix(in srgb, var(--surface-color) 85%, var(--primary-color) 15%);
+    background-color: color-mix(in srgb, var(--surface-color) 85%, var(--primary-light) 15%);
     transition: var(--transition); /* Smooth hover effect */
 }
 
@@ -563,6 +595,11 @@ pre.value {
     white-space: pre-wrap; /* For JSON formatting */
     word-wrap: break-word;
     color: #555; /* Neutral text color */
+}
+
+
+.json-table td:nth-child(1) {
+	padding-left: 25px
 }
 
 .inside-value-container {
@@ -762,4 +799,49 @@ pre.value {
         max-height: none !important;
         overflow: visible !important;
     }
+}
+
+/* Copy button inside table row */
+.copy-icon {
+	display: inline-block;
+	width: 15px;
+	left: 0;
+	position: absolute;
+	height: 100%;
+	padding-right: 10px;
+	top: 0;
+	background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" fill="%23000000" viewBox="0 0 24 24"><path d="M8.5,20A1.5,1.5,0,0,1,7,18.5V6H1.75A0.75,0.75,0,0,0,1,6.75V22.5A1.5,1.5,0,0,0,2.5,24h12A1.5,1.5,0,0,0,16,22.5V20H8.5Z"/><polygon points="19.5 4.5 24 4.5 19.5 0 19.5 4.5"/><path d="M18,6V0H9.75A0.75,0.75,0,0,0,9,.75V16.5A1.5,1.5,0,0,0,10.5,18h12A1.5,1.5,0,0,0,24,16.5V6H18Z"/></svg>');
+	background-size: 12px;
+	background-repeat: no-repeat;
+	background-position: center;
+	cursor: pointer;
+	vertical-align: middle;
+	margin-right: 6px;
+	opacity: 0; /* hidden by default */
+	filter: brightness(0) saturate(100%) invert(40%) sepia(53%) saturate(0%) hue-rotate(168deg) brightness(88%) contrast(96%);
+	transition: opacity 0.2s ease, filter 0s;
+	-webkit-transition : -webkit-filter 0s;
+}
+
+.copy-icon:hover {
+	filter: brightness(0) saturate(100%) invert(66%) sepia(93%) saturate(6806%) hue-rotate(229deg) brightness(105%) contrast(105%);
+}
+
+
+/* Copy button inside table row */
+th .copy-icon {
+	display: none;
+}
+
+/* Show icon on row hover without shifting layout */
+tr:hover .copy-icon {
+  opacity: 1;
+  transition: opacity 0.2s ease, filter 0;
+}
+
+.copy-icon.copied {
+  background-image: url('data:image/svg+xml,<%3Fxml version="1.0" encoding="utf-8"%3F><!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools --><svg width="800px" height="800px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.89163 13.2687L9.16582 17.5427L18.7085 8" stroke="%23000000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+  background-size: 15px;
+  transition: filter 500ms ease;
+  filter: brightness(0) saturate(100%) invert(38%) sepia(39%) saturate(839%) hue-rotate(82deg) brightness(99%) contrast(90%);
 }

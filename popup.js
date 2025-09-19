@@ -21,6 +21,16 @@ let recentlyAddedItems = new Map();const filterInput = document.getElementById("
 const clearBtn = document.getElementById("clear-btn");
 const itemList = document.getElementById("localStorage-items");
 
+const JSON_CLASSES = {
+    int: 'json-value',
+    float: 'json-value',
+    boolean: 'json-boolean',
+    null: 'json-null',
+    string: 'json-string',
+    object: 'json-object',
+    array: 'json-array'
+};
+
 function applyFilter() {
     let filterValue = filterInput.value.toLowerCase();
     let items = document.querySelectorAll("#localStorage-items .item");
@@ -348,28 +358,90 @@ function getCurrentTabId(callback) {
     }
 }
 
+// Parse a raw value into correct JS type
+function parseValue(value) {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number' || typeof value === 'boolean') return value;
 
-function prettyPrintJson(obj) {
-    const jsonLine = /^( *)("[\w]+": )?("[^"]*"|[\w.+-]*)?([,[{])?$/mg;
-    const replacer = function(match, pIndent, pKey, pVal, pEnd) {
-        const key = '<span class="json-key">';
-        const val = '<span class="json-value">';
-        const str = '<span class="json-string">';
-        let r = pIndent || '';
-        if (pKey)
-            r = r + key + pKey.replace(/[": ]/g, '') + '</span>: ';
-        if (pVal)
-            r = r + (pVal[0] == '"' ? str : val) + pVal + '</span>';
-        return r + (pEnd || '');
-    };
+    const str = String(value).trim().toLowerCase();
 
-    return JSON.stringify(obj, null, 3)
-        .replace(/&/g, '&amp;')
-        .replace(/\\"/g, '&quot;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(jsonLine, replacer);
+    if (str === 'true') return true;
+    if (str === 'false') return false;
+    if (str === 'null') return null;
+
+    if (!isNaN(str) && str !== '') return str.includes('.') ? parseFloat(str) : parseInt(str, 10);
+
+    return String(value);
 }
+
+// Detect type of a value
+function detectType(value) {
+    if (value === null) return 'null';
+    if (typeof value === 'boolean') return 'boolean';
+    if (typeof value === 'number') return Number.isInteger(value) ? 'int' : 'float';
+    if (typeof value === 'string') return 'string';
+    if (Array.isArray(value)) return 'array';
+    if (typeof value === 'object') return 'object';
+    return 'unknown';
+}
+
+// Generate HTML span for a value based on its type
+function renderValueSpan(value, addQuotes = true) {
+    const parsed = parseValue(value);
+    const type = detectType(parsed);
+    let display;
+
+    switch(type) {
+        case 'string':
+            display = String(parsed);
+            if (addQuotes) {
+                display = `"${display}"`;
+            }
+            break;
+        case 'null':
+            display = 'null';
+            break;
+        default:
+            display = parsed; // int, float, boolean 
+    }
+
+    return `<span class="${JSON_CLASSES[type]}">${display}</span>`;
+}
+
+
+// ---------- Pretty Print JSON ----------
+function prettyPrintJson(obj, indent = 0) {
+    const keyClass = 'json-key';
+    const indentStr = ' '.repeat(indent * 3);
+    let html = '';
+
+    const type = detectType(obj);
+
+    if (['int','float','boolean','null','string'].includes(type)) {
+        html += renderValueSpan(obj);
+    } else if (type === 'array') {
+        html += '[<br>';
+        obj.forEach((item, i) => {
+            html += indentStr + '   ' + prettyPrintJson(item, indent + 1);
+            if (i < obj.length - 1) html += ',';
+            html += '<br>';
+        });
+        html += indentStr + ']';
+    } else if (type === 'object') {
+        html += '{<br>';
+        const entries = Object.entries(obj);
+        entries.forEach(([k, v], i) => {
+            html += indentStr + '   <span class="' + keyClass + '">' + k + '</span>: '
+                  + prettyPrintJson(v, indent + 1);
+            if (i < entries.length - 1) html += ',';
+            html += '<br>';
+        });
+        html += indentStr + '}';
+    }
+
+    return html;
+}
+
 // Create HTML element for an item
 function createItemElement(key, data = {}, isSent = false) {  // default empty object for data
     // Ensure data is an object
@@ -442,7 +514,7 @@ function createItemElement(key, data = {}, isSent = false) {  // default empty o
     
     const propertiesDiv = document.createElement('div');
     propertiesDiv.className = 'properties-value';
-    propertiesDiv.textContent = 'Properties:';
+    propertiesDiv.textContent = '';
     
     const insideValueContainer = document.createElement('div');
     insideValueContainer.className = 'inside-value-container';
@@ -660,57 +732,50 @@ function safeDecode(value) {
     }
 }
 
-
+// ---------- Create Table ----------
 function createTableFromJson(json) {
     const table = document.createElement('table');
     table.className = 'json-table';
 
-    // Table header
+    // Header
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    const keyHeader = document.createElement('th');
-    keyHeader.textContent = 'Key';
-    const valueHeader = document.createElement('th');
-    valueHeader.textContent = 'Value';
-    headerRow.appendChild(keyHeader);
-    headerRow.appendChild(valueHeader);
+    ['Key','Value'].forEach(text => {
+        const th = document.createElement('th');
+        th.textContent = text;
+        headerRow.appendChild(th);
+    });
     thead.appendChild(headerRow);
     table.appendChild(thead);
 
-    // Table body
+    // Body
     const tbody = document.createElement('tbody');
-    const sortedEntries = Object.entries(json).sort((a, b) => a[0].localeCompare(b[0]));
-    
-    for (const [key, value] of sortedEntries) {
+    const sortedEntries = Object.entries(json).sort((a,b) => a[0].localeCompare(b[0]));
+
+    sortedEntries.forEach(([k,v]) => {
         const row = document.createElement('tr');
 
         const keyCell = document.createElement('td');
-        keyCell.textContent = key;
+        keyCell.textContent = k;
         row.appendChild(keyCell);
 
         const valueCell = document.createElement('td');
-        if (typeof value === 'object' && value !== null) {
-            valueCell.textContent = JSON.stringify(value, null, 2);
+        const type = detectType(v);
+        if (['int','float','boolean','null','string'].includes(type)) {
+            valueCell.innerHTML = renderValueSpan(v, false);
         } else {
-            if (value === null) {
-                valueCell.textContent = 'null';
-            } else {
-                try {
-                    valueCell.textContent = safeDecode(value);
-                } catch (e) {
-                    //console.error(e);
-                    valueCell.textContent = value;
-                }
-            }
+            valueCell.innerHTML = prettyPrintJson(v);
         }
 
         row.appendChild(valueCell);
         tbody.appendChild(row);
-    }
+    });
 
     table.appendChild(tbody);
     return table;
 }
+
+
 
 
 
@@ -777,3 +842,96 @@ function createCopyButton(value) {
 
     return copyButton;
 }
+/**
+ * Attach a copy button inside each <tr> on hover.
+ * - Uses the SVG as background.
+ * - Clicking the button copies the row's text to clipboard.
+ * - Adds a temporary 'copied' class on success for 2 seconds.
+ */
+(function attachRowCopySVG(joiner = ': ') {
+  function createCopyButton() {
+    const btn = document.createElement('span');
+    btn.className = 'copy-icon';
+    btn.title = 'Copy row';
+    return btn;
+  }
+
+  function attachButtons() {
+    document.querySelectorAll('table tr').forEach(tr => {
+      if (!tr.querySelector('.copy-icon')) {
+        const firstCell = tr.querySelector('td, th');
+        if (firstCell) {
+          const btn = createCopyButton();
+          firstCell.prepend(btn);
+
+          btn.addEventListener('click', e => {
+            e.stopPropagation();
+            copyRow(tr, btn);
+          });
+        }
+      }
+    });
+  }
+
+  function copyRow(tr, btn) {
+    const cells = Array.from(tr.querySelectorAll('td, th'));
+    const texts = cells.map(cell => cell.innerText.trim());
+	
+	
+	const parsed = parseValue(texts[1]);
+    const type = detectType(parsed);
+    texts[1] = parsed;
+	
+	if (type == 'string') {
+		texts[1] = `"${texts[1]}"`;
+	}
+		
+	
+    const finalText = texts.join(joiner);
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(finalText).then(() => {
+        showCopiedEffect(btn);
+        showToast('Key-Value copied!', 'success');
+      }).catch(() => fallbackCopy(finalText, btn));
+    } else {
+      fallbackCopy(finalText, btn);
+    }
+  }
+
+  function fallbackCopy(text, btn) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+
+      if (ok) {
+        showCopiedEffect(btn);
+        showToast('Key-Value copied!', 'success');
+      }
+    } catch (ex) {
+      console.error('Fallback copy failed:', ex);
+    }
+  }
+
+  // Add temporary 'copied' class to icon
+  function showCopiedEffect(btn) {
+    if (!btn) return;
+    btn.classList.add('copied');
+    setTimeout(() => btn.classList.remove('copied'), 2000);
+  }
+
+  // Initial attach
+  attachButtons();
+
+  // Observe DOM changes if new rows are added dynamically
+  const observer = new MutationObserver(attachButtons);
+  observer.observe(document.body, { childList: true, subtree: true });
+})();
