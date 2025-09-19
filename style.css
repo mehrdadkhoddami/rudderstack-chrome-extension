@@ -108,6 +108,30 @@ body {
     background-color: var(--background-color);
     color: var(--text-primary);
     overflow-x: hidden;
+	 transition: background-image 0.5s ease;
+}
+
+/* Overlay for the clear-list image */
+body::after {
+    content: "";
+    position: fixed; /* covers whole viewport */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('images/all-cleared.png');
+    background-size: 60% auto;
+    background-position: center;
+    background-repeat: no-repeat;
+    opacity: 0; /* hidden by default */
+    pointer-events: none; /* click-through */
+    transition: opacity 0.5s ease;
+    z-index: 999; /* above content */
+}
+
+/* When clear-list is added, fade it in */
+body.clear-list::after {
+    opacity: 1;
 }
 
 
@@ -155,6 +179,7 @@ body.sidepanel {
     flex-grow: 1;
 	margin: 2px 0;
     padding: 6px 30px 6px 6px;
+	transition: opacity 0.5s ease;
 }
 
 .clear-btn {

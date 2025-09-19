@@ -30,6 +30,29 @@ const JSON_CLASSES = {
     object: 'json-object',
     array: 'json-array'
 };
+document.addEventListener("DOMContentLoaded", () => {
+    const input = document.getElementById("filter-input");
+    const originalPlaceholder = "Filter events...";
+    const tempText = "Developed with ❤️ by Mehrdad Khoddami"; // temporary placeholder text
+
+    // Check localStorage to see if it has been shown before
+    if (!localStorage.getItem("shownPlaceholderOnce")) {
+        input.placeholder = tempText;
+
+        setTimeout(() => {
+            input.style.opacity = "0"; // fade out
+            setTimeout(() => {
+                input.placeholder = originalPlaceholder;
+                input.style.opacity = "1"; // fade back in
+                localStorage.setItem("shownPlaceholderOnce", "true"); // mark as shown
+            }, 500);
+        }, 5000);
+    } else {
+        input.placeholder = originalPlaceholder; // normal placeholder
+    }
+});
+
+
 
 function applyFilter() {
     let filterValue = filterInput.value.toLowerCase();
@@ -206,6 +229,10 @@ function clearAllItems(tabId) {
     // Clear UI first
     const container = document.getElementById('localStorage-items');
     container.innerHTML = '';
+	
+
+    // Add class to container after list is cleared
+    document.body.classList.add('clear-list');
 
     // Reset data structures
     seenItems.clear();
@@ -702,6 +729,11 @@ function displayResults(results) {
         chrome.storage.local.set({
             [`currentStorageItems_${tabId}`]: JSON.stringify([...currentStorageItems])
         });
+		
+		// Remove 'clear-list' class if there are items in the container
+		if (container.children.length > 0) {
+			document.body.classList.remove('clear-list');
+		}
 
         // Mark remaining items as sent
         existingElements.forEach((element, key) => {
