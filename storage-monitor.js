@@ -1,3 +1,13 @@
+// --- perf helpers auto-injected ---
+(function(){
+  if (window.__perfHelpersInjected) return;
+  window.__perfHelpersInjected = true;
+  window._throttle = function(fn, wait){ var last=0, t; return function(){ var now=Date.now(); if(now-last>wait){ last=now; fn.apply(this, arguments);} }; };
+  window._debounce = function(fn, wait){ var t; return function(){ var ctx=this, args=arguments; clearTimeout(t); t=setTimeout(function(){ fn.apply(ctx,args); }, wait); }; };
+  window._rafLoop = function(cb){ var active=true; function loop(){ if(!active) return; try{ cb(); }catch(e){ console.error(e);} requestAnimationFrame(loop);} requestAnimationFrame(loop); return function stop(){ active=false; }; };
+})();
+// --- end perf helpers ---
+
 // storage-monitor.js
 (function() {
     try {
