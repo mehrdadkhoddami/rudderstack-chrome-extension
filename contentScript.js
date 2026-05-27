@@ -17,7 +17,7 @@
     // ── Inject interceptor.js ────────────────────────────────────────────────
     function injectInterceptor(pattern) {
         if (interceptorInjected) {
-            // فقط pattern رو live آپدیت می‌کنیم بدون re-inject
+            
             window.dispatchEvent(new CustomEvent('__rs_update_pattern', { detail: { pattern } }));
             return;
         }

@@ -1,5 +1,4 @@
 // interceptor.js
-// وب-اکسسیبل ریسورس — از contentScript با <script src> inject میشه
 (function () {
     if (window.__rsInterceptorInjected) return;
     window.__rsInterceptorInjected = true;
@@ -14,7 +13,6 @@
 
     console.log('[RS Interceptor] Injected. Watching pattern:', PATTERN);
 
-    // پشتیبانی از آپدیت live بدون re-inject
     window.addEventListener('__rs_update_pattern', (e) => {
         if (e.detail && e.detail.pattern) {
             PATTERN = e.detail.pattern;
@@ -36,7 +34,7 @@
         }
     }
 
-    // substring match — همه دامنه‌ها رو cover می‌کنه
+    // substring match 
     function matchesPattern(url) {
         return url && url.includes(PATTERN);
     }

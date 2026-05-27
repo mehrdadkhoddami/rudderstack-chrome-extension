@@ -21,7 +21,6 @@ chrome.storage.onChanged.addListener((changes) => {
   if (changes.batchUrlPattern) {
     cachedBatchPattern = changes.batchUrlPattern.newValue || DEFAULT_BATCH_PATTERN;
     console.log('[RS BG] Batch pattern updated:', cachedBatchPattern);
-    // اطلاع به همه content script های متصل برای re-inject با pattern جدید
     connections.forEach((port) => {
       try { port.postMessage({ type: 'patternUpdate', pattern: cachedBatchPattern }); } catch (e) {}
     });
@@ -54,7 +53,7 @@ function broadcastBatch(batch, sourceTabId, timestamp, via) {
     }
 }
 
-// ── webRequest: fallback — از url.includes(pattern) استفاده می‌کنه ────────────
+// ── webRequest: fallback — using url.includes(pattern) ───────────────────
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.method !== 'POST') return;
