@@ -36,6 +36,7 @@
   "side_panel": {
     "default_path": "sidepanel.html"
   },
+  "options_ui": { "page": "settings.html", "open_in_tab": true },
   "icons": {
     "16": "icon-16.png",
     "48": "icon-48.png",

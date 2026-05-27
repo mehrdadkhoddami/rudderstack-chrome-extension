@@ -14,22 +14,23 @@
     const MAX_RECONNECT_ATTEMPTS = 5;
     let interceptorInjected = false;
 
-    // ── Inject interceptor.js from extension (web_accessible_resource) ─────────
-    // Using <script src="chrome-extension://..."> instead of inline script.textContent
-    // This bypasses CSP because the script origin is the extension itself.
+    // ── Inject interceptor.js ────────────────────────────────────────────────
     function injectInterceptor(pattern) {
-        if (interceptorInjected) return;
+        if (interceptorInjected) {
+            // فقط pattern رو live آپدیت می‌کنیم بدون re-inject
+            window.dispatchEvent(new CustomEvent('__rs_update_pattern', { detail: { pattern } }));
+            return;
+        }
         interceptorInjected = true;
 
         try {
             const scriptUrl = chrome.runtime.getURL('interceptor.js');
             const script = document.createElement('script');
             script.src = scriptUrl;
-            // Pass the pattern via data attribute — interceptor.js reads it from currentScript
             script.dataset.pattern = pattern || '/beacon/v1/batch';
             script.onload = () => {
                 script.remove();
-                console.log('[RS Content] interceptor.js injected successfully via src, pattern:', pattern);
+                console.log('[RS Content] interceptor.js injected, pattern:', pattern);
             };
             script.onerror = (e) => {
                 console.error('[RS Content] Failed to inject interceptor.js:', e);
@@ -40,15 +41,12 @@
         }
     }
 
-    // ── Listen for captured batches from page context ───────────────────────
+    // ── Listen for captured batches from page context ────────────────────────
     window.addEventListener('__rs_batch_captured', (e) => {
         try {
             const { batch, timestamp, sourceType } = e.detail;
             if (!Array.isArray(batch) || !batch.length) return;
-
             console.log(`[RS Content] __rs_batch_captured: ${batch.length} events via ${sourceType}`);
-
-            // Forward to background via port — background will broadcast to sidepanel
             if (port) {
                 try {
                     port.postMessage({ type: 'batchCaptured', data: batch, timestamp });
@@ -64,7 +62,7 @@
         }
     });
 
-    // ── localStorage monitoring ─────────────────────────────────────────────
+    // ── localStorage monitoring ──────────────────────────────────────────────
     function safeGetLocalStorage() {
         try {
             const items = {};
@@ -113,11 +111,8 @@
         } catch (e) { console.error('[RS Content] Error in checkAndNotifyChanges:', e); }
     }
 
-    // ── Message listener ────────────────────────────────────────────────────
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        if (message.type === 'clearAll') {
-            sendResponse({ success: true });
-        }
+        if (message.type === 'clearAll') sendResponse({ success: true });
         return true;
     });
 
@@ -126,10 +121,8 @@
             if (!isExtensionActive || !chrome.runtime) { cleanup(); return; }
             if (monitoringInterval) clearInterval(monitoringInterval);
 
-            // 1. Inject network interceptor (web_accessible_resource approach)
             injectInterceptor(pattern);
 
-            // 2. Inject storage-monitor for localStorage tracking
             const storageScript = document.createElement('script');
             storageScript.src = chrome.runtime.getURL('storage-monitor.js');
             storageScript.onload = () => { storageScript.remove(); checkAndNotifyChanges(); };
@@ -170,9 +163,9 @@
             port = chrome.runtime.connect({ name: 'rudderstack-monitor' });
 
             port.onMessage.addListener((message) => {
-                // background ممکنه pattern update بفرسته
                 if (message.type === 'patternUpdate' && message.pattern) {
-                    interceptorInjected = false; // re-inject with new pattern
+                    console.log('[RS Content] Pattern updated from background:', message.pattern);
+                    // interceptor قبلاً inject شده، فقط event می‌زنیم
                     injectInterceptor(message.pattern);
                 }
             });
@@ -181,7 +174,6 @@
                 try { if (chrome.runtime.lastError) cleanup(); } catch(e) {}
             });
 
-            // Read pattern then start monitoring
             chrome.storage.local.get(['batchUrlPattern'], (result) => {
                 const pattern = result.batchUrlPattern || '/beacon/v1/batch';
                 setupMonitoring(pattern);

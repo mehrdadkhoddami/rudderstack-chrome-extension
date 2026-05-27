@@ -1,69 +1,67 @@
 // settings.js
-const DEFAULT_PATTERN = '/beacon/v1/batch';
+const DEFAULT_BATCH_PATTERN = '/beacon/v1/batch';
 
-const patternInput   = document.getElementById('batchPattern');
-const saveBtn        = document.getElementById('saveBtn');
-const resetBtn       = document.getElementById('resetBtn');
-const toastEl        = document.getElementById('toast');
-const currentWrap    = document.getElementById('currentValueWrap');
-const currentText    = document.getElementById('currentValueText');
+const batchPatternInput  = document.getElementById('batchPattern');
+const saveBtn            = document.getElementById('saveBtn');
+const resetBtn           = document.getElementById('resetBtn');
+const toast              = document.getElementById('toast');
+const currentValueWrap   = document.getElementById('currentValueWrap');
+const currentValueText   = document.getElementById('currentValueText');
 
-// ── Load saved value ──────────────────────────────────────────────
+// ── Load ──────────────────────────────────────────────────────────────────────
 chrome.storage.local.get(['batchUrlPattern'], (result) => {
-  const saved = result.batchUrlPattern || DEFAULT_PATTERN;
-  patternInput.value = saved;
-  showCurrentValue(saved);
+    const saved = result.batchUrlPattern || DEFAULT_BATCH_PATTERN;
+    batchPatternInput.value = saved;
+    showCurrent(saved);
 });
 
-// ── Preset chips ──────────────────────────────────────────────────
-document.querySelectorAll('.chip').forEach(chip => {
-  chip.addEventListener('click', () => {
-    patternInput.value = chip.dataset.value;
-    patternInput.focus();
-  });
-});
+function showCurrent(pattern) {
+    currentValueText.textContent = pattern;
+    currentValueWrap.style.display = '';
+}
 
-// ── Save ──────────────────────────────────────────────────────────
+function showToast(message, type = 'success') {
+    toast.textContent = message;
+    toast.className = 'toast ' + type;
+    void toast.offsetWidth;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2200);
+}
+
+// ── Save ──────────────────────────────────────────────────────────────────────
 saveBtn.addEventListener('click', () => {
-  const val = patternInput.value.trim();
-  if (!val) {
-    showToast('Pattern cannot be empty.', 'error');
-    patternInput.focus();
-    return;
-  }
-  chrome.storage.local.set({ batchUrlPattern: val }, () => {
-    showCurrentValue(val);
-    showToast('Settings saved!', 'success');
-  });
+    const val = batchPatternInput.value.trim();
+    if (!val) {
+        batchPatternInput.classList.add('error');
+        showToast('Pattern cannot be empty.', 'error');
+        return;
+    }
+    batchPatternInput.classList.remove('error');
+    chrome.storage.local.set({ batchUrlPattern: val }, () => {
+        showCurrent(val);
+        showToast('Settings saved ✓');
+    });
 });
 
-// ── Reset ─────────────────────────────────────────────────────────
+// ── Reset ─────────────────────────────────────────────────────────────────────
 resetBtn.addEventListener('click', () => {
-  patternInput.value = DEFAULT_PATTERN;
-  chrome.storage.local.set({ batchUrlPattern: DEFAULT_PATTERN }, () => {
-    showCurrentValue(DEFAULT_PATTERN);
-    showToast('Reset to default.', 'success');
-  });
+    batchPatternInput.value = DEFAULT_BATCH_PATTERN;
+    batchPatternInput.classList.remove('error');
+    chrome.storage.local.set({ batchUrlPattern: DEFAULT_BATCH_PATTERN }, () => {
+        showCurrent(DEFAULT_BATCH_PATTERN);
+        showToast('Reset to default ✓');
+    });
 });
 
-// ── Save on Enter ─────────────────────────────────────────────────
-patternInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') saveBtn.click();
+// ── Preset chips ──────────────────────────────────────────────────────────────
+document.querySelectorAll('.chip[data-value]').forEach(chip => {
+    chip.addEventListener('click', () => {
+        batchPatternInput.value = chip.dataset.value;
+        batchPatternInput.classList.remove('error');
+    });
 });
 
-// ── Helpers ───────────────────────────────────────────────────────
-function showCurrentValue(val) {
-  currentText.textContent = val;
-  currentWrap.style.display = 'block';
-}
-
-let toastTimer;
-function showToast(msg, type = 'success') {
-  toastEl.textContent = msg;
-  toastEl.className = `toast ${type}`;
-  // force reflow so re-triggering works
-  void toastEl.offsetWidth;
-  toastEl.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
-}
+// ── Enter key ─────────────────────────────────────────────────────────────────
+batchPatternInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveBtn.click();
+});

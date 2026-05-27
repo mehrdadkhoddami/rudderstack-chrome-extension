@@ -21,6 +21,10 @@ chrome.storage.onChanged.addListener((changes) => {
   if (changes.batchUrlPattern) {
     cachedBatchPattern = changes.batchUrlPattern.newValue || DEFAULT_BATCH_PATTERN;
     console.log('[RS BG] Batch pattern updated:', cachedBatchPattern);
+    // اطلاع به همه content script های متصل برای re-inject با pattern جدید
+    connections.forEach((port) => {
+      try { port.postMessage({ type: 'patternUpdate', pattern: cachedBatchPattern }); } catch (e) {}
+    });
   }
 });
 
@@ -39,11 +43,8 @@ function broadcastBatch(batch, sourceTabId, timestamp, via) {
         source: 'network',
     };
 
-    // Send once with the real tabId
     chrome.runtime.sendMessage(payload).catch(() => {});
 
-    // If tabId is -1 (sendBeacon) — also send for every connected tab
-    // so the open sidepanel always picks it up
     if (sourceTabId === -1 || sourceTabId === undefined || sourceTabId === null) {
         connections.forEach((port, connTabId) => {
             if (connTabId !== sourceTabId) {
@@ -53,9 +54,7 @@ function broadcastBatch(batch, sourceTabId, timestamp, via) {
     }
 }
 
-// ── webRequest: catches fetch/XHR but NOT text/plain sendBeacon ───────────────
-// This is a SECONDARY path — interceptor.js in page context is primary.
-// We keep it as a fallback for non-CSP sites where requestBody.raw is populated.
+// ── webRequest: fallback — از url.includes(pattern) استفاده می‌کنه ────────────
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.method !== 'POST') return;
@@ -65,7 +64,6 @@ chrome.webRequest.onBeforeRequest.addListener(
 
     try {
         if (!details.requestBody || !details.requestBody.raw || !details.requestBody.raw.length) {
-            // Expected for text/plain — interceptor.js handles this case
             console.log('[RS BG] requestBody.raw empty (text/plain) — interceptor.js will handle');
             return;
         }
@@ -99,7 +97,6 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onMessage.addListener((message) => {
     if (message.type === 'storageChanged') {
-        // localStorage queue events
         chrome.runtime.sendMessage({
             type: 'updatePopup',
             data: message.data,
@@ -108,7 +105,6 @@ chrome.runtime.onConnect.addListener((port) => {
         }).catch(() => {});
 
     } else if (message.type === 'batchCaptured') {
-        // Network batch events captured by interceptor.js in page context
         if (!Array.isArray(message.data) || !message.data.length) return;
         console.log(`[RS BG] batchCaptured from content script (tabId=${tabId}): ${message.data.length} events`);
         broadcastBatch(message.data, tabId, message.timestamp, 'interceptor.js');

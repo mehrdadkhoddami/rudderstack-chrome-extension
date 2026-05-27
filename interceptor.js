@@ -1,18 +1,26 @@
 // interceptor.js
-// این فایل به عنوان web_accessible_resource تعریف شده
-// و از contentScript با <script src> inject میشه — با CSP کار میکنه
+// وب-اکسسیبل ریسورس — از contentScript با <script src> inject میشه
 (function () {
     if (window.__rsInterceptorInjected) return;
     window.__rsInterceptorInjected = true;
 
-    // Pattern رو از data attribute اسکریپت میخونیم
     const me = document.currentScript || (function () {
         const scripts = document.getElementsByTagName('script');
         return scripts[scripts.length - 1];
     })();
-    const PATTERN = (me && me.dataset && me.dataset.pattern) ? me.dataset.pattern : '/beacon/v1/batch';
+    let PATTERN = (me && me.dataset && me.dataset.pattern)
+        ? me.dataset.pattern
+        : '/beacon/v1/batch';
 
     console.log('[RS Interceptor] Injected. Watching pattern:', PATTERN);
+
+    // پشتیبانی از آپدیت live بدون re-inject
+    window.addEventListener('__rs_update_pattern', (e) => {
+        if (e.detail && e.detail.pattern) {
+            PATTERN = e.detail.pattern;
+            console.log('[RS Interceptor] Pattern updated to:', PATTERN);
+        }
+    });
 
     function dispatchBatch(bodyText, sourceType) {
         try {
@@ -28,6 +36,7 @@
         }
     }
 
+    // substring match — همه دامنه‌ها رو cover می‌کنه
     function matchesPattern(url) {
         return url && url.includes(PATTERN);
     }
@@ -46,7 +55,6 @@
                 } else if (body instanceof ArrayBuffer) {
                     dispatchBatch(new TextDecoder().decode(body), 'fetch-arraybuffer');
                 } else if (body instanceof ReadableStream) {
-                    // ReadableStream: clone and read
                     const [s1, s2] = body.tee();
                     init = { ...init, body: s1 };
                     new Response(s2).text().then(text => dispatchBatch(text, 'fetch-stream')).catch(() => {});

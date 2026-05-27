@@ -18,305 +18,137 @@
       --shadow: 0 4px 24px rgba(25,39,188,0.08);
       --transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
     }
-
     @media (prefers-color-scheme: dark) {
       :root {
-        --primary: #7b8fff;
-        --primary-light: #a5adff;
-        --bg: #13151f;
-        --surface: #1e2130;
-        --border: #2d3050;
-        --text: #e8ecf8;
-        --text-muted: #8892b0;
+        --primary: #7b8fff; --primary-light: #a5adff;
+        --bg: #13151f; --surface: #1e2130; --border: #2d3050;
+        --text: #e8ecf8; --text-muted: #8892b0;
         --shadow: 0 4px 24px rgba(0,0,0,0.4);
       }
     }
-
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
       font-family: -apple-system, 'Segoe UI', Roboto, system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      align-items: flex-start;
-      justify-content: center;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; display: flex;
+      align-items: flex-start; justify-content: center;
       padding: 40px 16px;
     }
+    .container { width: 100%; max-width: 600px; }
 
-    .container {
-      width: 100%;
-      max-width: 560px;
-    }
-
-    /* ── Header ── */
-    .header {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      margin-bottom: 32px;
-    }
-
+    .header { display: flex; align-items: center; gap: 14px; margin-bottom: 32px; }
     .header-icon {
-      width: 44px;
-      height: 44px;
-      border-radius: 12px;
+      width: 44px; height: 44px; border-radius: 12px;
       background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
-
     .header-icon svg { fill: white; }
+    .header-text h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+    .header-text p  { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
 
-    .header-text h1 {
-      font-size: 20px;
-      font-weight: 700;
-      letter-spacing: -0.3px;
-    }
-
-    .header-text p {
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-top: 2px;
-    }
-
-    /* ── Card ── */
     .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 28px;
-      margin-bottom: 20px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 28px; margin-bottom: 20px;
     }
-
     .card-title {
-      font-size: 13px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: var(--text-muted);
-      margin-bottom: 18px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      font-size: 13px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.8px; color: var(--text-muted);
+      margin-bottom: 18px; display: flex; align-items: center; gap: 8px;
     }
+    .card-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
-    .card-title::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: var(--border);
-    }
-
-    /* ── Field ── */
     .field { margin-bottom: 20px; }
     .field:last-child { margin-bottom: 0; }
-
-    label {
-      display: block;
-      font-size: 13px;
-      font-weight: 600;
-      margin-bottom: 8px;
-      color: var(--text);
-    }
-
-    .label-hint {
-      font-weight: 400;
-      color: var(--text-muted);
-      margin-left: 6px;
-      font-size: 12px;
-    }
-
-    .input-wrap {
-      position: relative;
-    }
-
-    .input-prefix {
-      position: absolute;
-      left: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--text-muted);
-      font-size: 13px;
-      font-family: 'SF Mono', 'Roboto Mono', monospace;
-      pointer-events: none;
-      user-select: none;
-    }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+    .label-hint { font-weight: 400; color: var(--text-muted); margin-left: 6px; font-size: 12px; }
 
     input[type="text"] {
-      width: 100%;
-      padding: 11px 14px 11px 14px;
-      border: 1.5px solid var(--border);
-      border-radius: 8px;
-      font-size: 14px;
-      font-family: 'SF Mono', 'Roboto Mono', monospace;
-      background: var(--bg);
-      color: var(--text);
-      transition: var(--transition);
-      outline: none;
+      width: 100%; padding: 11px 14px;
+      border: 1.5px solid var(--border); border-radius: 8px;
+      font-size: 14px; font-family: 'SF Mono', 'Roboto Mono', monospace;
+      background: var(--bg); color: var(--text);
+      transition: var(--transition); outline: none;
     }
-
     input[type="text"]:focus {
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(25,39,188,0.1);
     }
-
-    .hint {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-top: 7px;
-      line-height: 1.5;
+    input[type="text"].error {
+      border-color: var(--danger);
+      box-shadow: 0 0 0 3px rgba(239,68,68,0.12);
     }
-
+    .hint { font-size: 12px; color: var(--text-muted); margin-top: 7px; line-height: 1.6; }
     .hint code {
-      background: var(--border);
-      padding: 1px 5px;
-      border-radius: 4px;
-      font-family: 'SF Mono', monospace;
-      font-size: 11px;
+      background: var(--border); padding: 1px 5px; border-radius: 4px;
+      font-family: 'SF Mono', monospace; font-size: 11px;
     }
 
-    /* ── Actions ── */
-    .actions {
-      display: flex;
-      gap: 10px;
-      margin-top: 24px;
-    }
-
+    .actions { display: flex; gap: 10px; margin-top: 24px; }
     button {
-      cursor: pointer;
-      font-family: inherit;
-      border: none;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      padding: 10px 22px;
-      transition: var(--transition);
+      cursor: pointer; font-family: inherit; border: none;
+      border-radius: 8px; font-size: 14px; font-weight: 600;
+      padding: 10px 22px; transition: var(--transition);
     }
-
     .btn-primary {
       background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-      color: white;
-      flex: 1;
+      color: white; flex: 1;
     }
-
-    .btn-primary:hover {
-      filter: brightness(1.1);
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(25,39,188,0.3);
-    }
-
+    .btn-primary:hover { filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(25,39,188,0.3); }
     .btn-primary:active { transform: translateY(0); }
+    .btn-secondary { background: var(--bg); color: var(--text-muted); border: 1.5px solid var(--border); }
+    .btn-secondary:hover { color: var(--text); border-color: var(--text-muted); }
 
-    .btn-secondary {
-      background: var(--bg);
-      color: var(--text-muted);
-      border: 1.5px solid var(--border);
-    }
-
-    .btn-secondary:hover {
-      color: var(--text);
-      border-color: var(--text-muted);
-    }
-
-    /* ── Toast ── */
     .toast {
-      position: fixed;
-      bottom: 28px;
-      left: 50%;
+      position: fixed; bottom: 28px; left: 50%;
       transform: translateX(-50%) translateY(20px);
-      padding: 11px 22px;
-      border-radius: 999px;
-      font-size: 14px;
-      font-weight: 500;
-      color: white;
-      opacity: 0;
-      pointer-events: none;
+      padding: 11px 22px; border-radius: 999px;
+      font-size: 14px; font-weight: 500; color: white;
+      opacity: 0; pointer-events: none;
       transition: opacity 0.3s ease, transform 0.3s ease;
-      z-index: 9999;
-      white-space: nowrap;
+      z-index: 9999; white-space: nowrap;
     }
-
-    .toast.show {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .toast.success { background: var(--success); }
     .toast.error   { background: var(--danger); }
 
-    /* ── Current value pill ── */
     .current-value {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(25,39,188,0.08);
-      border: 1px solid rgba(25,39,188,0.15);
-      border-radius: 999px;
-      padding: 4px 12px;
-      font-family: 'SF Mono', monospace;
-      font-size: 12px;
-      color: var(--primary);
-      margin-bottom: 16px;
-      max-width: 100%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(25,39,188,0.08); border: 1px solid rgba(25,39,188,0.15);
+      border-radius: 999px; padding: 4px 12px;
+      font-family: 'SF Mono', monospace; font-size: 12px; color: var(--primary);
+      margin-bottom: 16px; max-width: 100%;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-
     .current-value-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--success);
-      flex-shrink: 0;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--success); flex-shrink: 0;
       animation: pulse 2s infinite;
     }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.4; }
-    }
-
-    /* ── Presets ── */
-    .presets-label {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-    }
-
-    .preset-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
+    .presets-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+    .preset-chips { display: flex; flex-wrap: wrap; gap: 8px; }
     .chip {
-      padding: 5px 12px;
-      border-radius: 999px;
-      border: 1.5px solid var(--border);
-      background: var(--bg);
-      font-size: 12px;
-      font-family: 'SF Mono', monospace;
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: var(--transition);
+      padding: 5px 12px; border-radius: 999px;
+      border: 1.5px solid var(--border); background: var(--bg);
+      font-size: 12px; font-family: 'SF Mono', monospace;
+      color: var(--text-muted); cursor: pointer; transition: var(--transition);
     }
+    .chip:hover { border-color: var(--primary); color: var(--primary); background: rgba(25,39,188,0.05); }
 
-    .chip:hover {
-      border-color: var(--primary);
-      color: var(--primary);
-      background: rgba(25,39,188,0.05);
+    .info-box {
+      display: flex; gap: 10px; align-items: flex-start;
+      background: rgba(25,39,188,0.05); border: 1px solid rgba(25,39,188,0.15);
+      border-radius: 8px; padding: 12px 14px; margin-bottom: 20px;
     }
+    .info-box svg { fill: var(--primary); flex-shrink: 0; margin-top: 1px; }
+    .info-box p { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+    .info-box p strong { color: var(--text); }
   </style>
 </head>
 <body>
   <div class="container">
-
     <div class="header">
       <div class="header-icon">
         <svg width="22" height="22" viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
@@ -327,7 +159,6 @@
       </div>
     </div>
 
-    <!-- Batch Endpoint Card -->
     <div class="card">
       <div class="card-title">Batch Endpoint</div>
 
@@ -338,37 +169,40 @@
         </div>
       </div>
 
+      <div class="info-box">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+        <p>هر POST request که URL آن <strong>شامل</strong> این pattern باشد intercept می‌شود. می‌توانید فقط path را بنویسید تا روی همه دامنه‌ها کار کند، یا URL کامل برای یک سرور خاص.</p>
+      </div>
+
       <div class="field">
-        <label>URL Pattern <span class="label-hint">(substring to match in POST requests)</span></label>
-        <div class="input-wrap">
-          <input type="text" id="batchPattern" placeholder="/beacon/v1/batch" spellcheck="false" autocomplete="off" />
-        </div>
+        <label>URL Pattern <span class="label-hint">(substring match در همه POST requests)</span></label>
+        <input type="text" id="batchPattern"
+               placeholder="/beacon/v1/batch"
+               spellcheck="false" autocomplete="off" />
         <p class="hint">
-          The extension intercepts any POST request whose URL <strong>contains</strong> this string.
-          Example: <code>/beacon/v1/batch</code> or <code>/v1/batch</code>
+          فقط path: <code>/beacon/v1/batch</code> — روی همه دامنه‌ها match می‌کند<br>
+          دامنه خاص: <code>ingest-data-afra.snappfood.dev/beacon/v1/batch</code>
         </p>
       </div>
 
       <div class="field">
         <p class="presets-label">Quick presets:</p>
         <div class="preset-chips">
+          <span class="chip" data-value="ingest-data-afra.snappfood.dev/beacon/v1/batch">snappfood (afra)</span>
           <span class="chip" data-value="/beacon/v1/batch">/beacon/v1/batch</span>
           <span class="chip" data-value="/v1/batch">/v1/batch</span>
           <span class="chip" data-value="/dataplane/v1/batch">/dataplane/v1/batch</span>
-          <span class="chip" data-value="ingest-data-afra.snappfood.dev/beacon/v1/batch">snappfood (afra)</span>
         </div>
       </div>
 
       <div class="actions">
         <button class="btn-secondary" id="resetBtn">Reset to default</button>
-        <button class="btn-primary" id="saveBtn">Save settings</button>
+        <button class="btn-primary"   id="saveBtn">Save settings</button>
       </div>
     </div>
-
   </div>
 
   <div class="toast" id="toast"></div>
-
   <script src="settings.js"></script>
 </body>
 </html>
