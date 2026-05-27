@@ -23,7 +23,7 @@
     }
   ],
   "web_accessible_resources": [{
-    "resources": ["storage-monitor.js"],
+	"resources": ["interceptor.js", "storage-monitor.js"],
     "matches": ["<all_urls>"]
   }],
   "background": {

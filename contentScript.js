@@ -1,391 +1,205 @@
-
-// --- Performance helpers injected automatically (throttle/debounce/rafLoop) ---
+// contentScript.js
 (function(){
   if (window.__perfHelpersInjected) return;
   window.__perfHelpersInjected = true;
-  window._throttle = function(fn, wait){ var last=0, t; return function(){ var now=Date.now(); if(now-last>wait){ last=now; fn.apply(this, arguments);} }; };
+  window._throttle = function(fn, wait){ var last=0; return function(){ var now=Date.now(); if(now-last>wait){ last=now; fn.apply(this, arguments);} }; };
   window._debounce = function(fn, wait){ var t; return function(){ var ctx=this, args=arguments; clearTimeout(t); t=setTimeout(function(){ fn.apply(ctx,args); }, wait); }; };
-  window._rafLoop = function(cb){ var active=true; function loop(){ if(!active) return; cb(); requestAnimationFrame(loop);} requestAnimationFrame(loop); return function stop(){ active=false; }; };
 })();
-// --- end helpers ---
 
 (() => {
-    let lastProcessedState = {};
     let isExtensionActive = true;
     let port = null;
     let monitoringInterval = null;
-    let batchEvents = [];
     let reconnectAttempts = 0;
-    const MAX_RECONNECT_ATTEMPTS = 3;
-    let processedBatchEvents = new Map();
-	let lastBatchTimestamp = 0;
-	
-	// Add message listener at the top level of your IIFE
-	chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-		if (message.type === 'clearAll' && message.clearBatch) {
-			console.log('Received clearAll command with batch clear');
-			clearAllData();
-			sendResponse({ success: true });
-		}
-		return true;
-	});
-	
-	function clearAllData() {
-		try {
-			// Clear all batch-related data
-			batchEvents = [];
-			processedBatchEvents.clear();
-			lastBatchTimestamp = 0;
-			lastProcessedState = {};
-			
-			// Clear any existing intervals
-			if (monitoringInterval) {
-				clearInterval(monitoringInterval);
-				monitoringInterval = null;
-			}
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    let interceptorInjected = false;
 
-			console.log('Cleared all batch data and tracking structures');
-			
-			// Restart monitoring with fresh state
-			setupMonitoring();
-		} catch (e) {
-			console.error('Error in clearAllData:', e);
-		}
-	}
+    // ── Inject interceptor.js from extension (web_accessible_resource) ─────────
+    // Using <script src="chrome-extension://..."> instead of inline script.textContent
+    // This bypasses CSP because the script origin is the extension itself.
+    function injectInterceptor(pattern) {
+        if (interceptorInjected) return;
+        interceptorInjected = true;
 
-    // Safe localStorage access
+        try {
+            const scriptUrl = chrome.runtime.getURL('interceptor.js');
+            const script = document.createElement('script');
+            script.src = scriptUrl;
+            // Pass the pattern via data attribute — interceptor.js reads it from currentScript
+            script.dataset.pattern = pattern || '/beacon/v1/batch';
+            script.onload = () => {
+                script.remove();
+                console.log('[RS Content] interceptor.js injected successfully via src, pattern:', pattern);
+            };
+            script.onerror = (e) => {
+                console.error('[RS Content] Failed to inject interceptor.js:', e);
+            };
+            (document.head || document.documentElement).prepend(script);
+        } catch (e) {
+            console.error('[RS Content] Error injecting interceptor:', e);
+        }
+    }
+
+    // ── Listen for captured batches from page context ───────────────────────
+    window.addEventListener('__rs_batch_captured', (e) => {
+        try {
+            const { batch, timestamp, sourceType } = e.detail;
+            if (!Array.isArray(batch) || !batch.length) return;
+
+            console.log(`[RS Content] __rs_batch_captured: ${batch.length} events via ${sourceType}`);
+
+            // Forward to background via port — background will broadcast to sidepanel
+            if (port) {
+                try {
+                    port.postMessage({ type: 'batchCaptured', data: batch, timestamp });
+                } catch (err) {
+                    console.warn('[RS Content] Failed to post batchCaptured to port:', err);
+                    handleConnectionError();
+                }
+            } else {
+                console.warn('[RS Content] No port available to forward batch');
+            }
+        } catch (err) {
+            console.error('[RS Content] Error handling __rs_batch_captured:', err);
+        }
+    });
+
+    // ── localStorage monitoring ─────────────────────────────────────────────
     function safeGetLocalStorage() {
         try {
             const items = {};
             if (!localStorage) return items;
-
             for (let i = 0; i < localStorage.length; i++) {
                 try {
                     const key = localStorage.key(i);
-					if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
-
+                    if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
                     const value = localStorage.getItem(key);
                     if (!value) continue;
-
                     try {
                         const parsedL1 = JSON.parse(value);
                         const parsedJson = JSON.parse(parsedL1);
-						for (var j in parsedJson) {
-							if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
-							const currentItem = parsedJson[j].item.event
-							
-							if (currentItem.type === 'track' || currentItem.type === 'page') {
-								const currentKey = parsedJson[j].item.event.messageId
-								items[currentKey] = {
-									value: value,
-									parsedValue: currentItem,
-									originalKey: currentItem.event || currentKey,
-									propertiesKey: currentItem.hasOwnProperty('properties') ? currentItem.properties : null,
-									timestamp: Date.now()
-								};
-							}
-						}
-						
-					
-                        // Check if the event type is either 'track' or 'page'
-
-                    } catch (parseError) {
-                        items[key] = {
-                            value: value,
-                            parsedValue: null,
-                            originalKey: key,
-                            propertiesKey: null,
-                            timestamp: Date.now()
-                        };
-                    }
-                } catch (itemError) {
-                    continue;
-                }
+                        for (var j in parsedJson) {
+                            if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
+                            const currentItem = parsedJson[j].item.event;
+                            if (currentItem.type === 'track' || currentItem.type === 'page') {
+                                const currentKey = currentItem.messageId;
+                                if (!currentKey) continue;
+                                items[currentKey] = {
+                                    value: JSON.stringify(currentItem),
+                                    parsedValue: currentItem,
+                                    originalKey: currentItem.event || currentItem.name || currentKey,
+                                    propertiesKey: currentItem.properties || null,
+                                    timestamp: Date.now(),
+                                    source: 'localStorage'
+                                };
+                            }
+                        }
+                    } catch (parseError) {}
+                } catch (itemError) { continue; }
             }
             return items;
-        } catch (e) {
-            console.warn('Error accessing localStorage:', e);
-            return {};
-        }
+        } catch (e) { return {}; }
     }
 
-    // Process localStorage items
-	function processLocalStorageItems() {
-		if (!isExtensionActive) return null;
-		
-		try {
-			const items = safeGetLocalStorage();
-			
-			// Add batch events if available
-			if (batchEvents.length > 0) {
-				batchEvents.forEach((event, index) => {
-					// Only process track and page events
-					if (event.type === 'track' || event.type === 'page') {
-						const eventKey = event.messageId
-						//const eventKey = `batch____${event.event || event.type}_${lastBatchTimestamp}`;
-						
-						items[eventKey] = {
-							value: JSON.stringify(event),
-							parsedValue: event,
-							originalKey: event.event || 'Batch Event',
-							propertiesKey: event.properties || null,
-							timestamp: lastBatchTimestamp,
-							isBatchEvent: true
-						};
-					}
-				});
-			}
-			
-			const currentStateStr = JSON.stringify(items);
-			const lastStateStr = JSON.stringify(lastProcessedState);
-			
-			if (currentStateStr !== lastStateStr) {
-				lastProcessedState = items;
-				return items;
-			}
-			
-			return null;
-		} catch (e) {
-			console.error('Error processing items:', e);
-			return null;
-		}
-	}
-
-    // Check changes and notify
     function checkAndNotifyChanges() {
         try {
-            if (!isExtensionActive || !chrome.runtime) {
-                cleanup();
-                return;
-            }
-
-            const items = processLocalStorageItems();
-            if (items && port) {
+            if (!isExtensionActive || !chrome.runtime) { cleanup(); return; }
+            const items = safeGetLocalStorage();
+            if (port && Object.keys(items).length > 0) {
                 try {
-                    port.postMessage({
-                        type: 'storageChanged',
-                        data: items
-                    });
-                } catch (e) {
-                    console.log('Error posting message:', e);
-                    handleConnectionError();
-                }
+                    port.postMessage({ type: 'storageChanged', data: items });
+                } catch (e) { handleConnectionError(); }
             }
-        } catch (e) {
-            console.error('Error in checkAndNotifyChanges:', e);
-        }
+        } catch (e) { console.error('[RS Content] Error in checkAndNotifyChanges:', e); }
     }
 
-    // Setup monitoring
-    function setupMonitoring() {
+    // ── Message listener ────────────────────────────────────────────────────
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        if (message.type === 'clearAll') {
+            sendResponse({ success: true });
+        }
+        return true;
+    });
+
+    function setupMonitoring(pattern) {
         try {
-            if (!isExtensionActive || !chrome.runtime) {
-                cleanup();
-                return;
-            }
+            if (!isExtensionActive || !chrome.runtime) { cleanup(); return; }
+            if (monitoringInterval) clearInterval(monitoringInterval);
 
-            // Clear existing interval
-            if (monitoringInterval) {
-                clearInterval(monitoringInterval);
-            }
+            // 1. Inject network interceptor (web_accessible_resource approach)
+            injectInterceptor(pattern);
 
-            // Inject monitor script
-            const script = document.createElement('script');
-            script.src = chrome.runtime.getURL('storage-monitor.js');
-            script.onload = () => {
-                script.remove();
-                checkAndNotifyChanges();
-            };
-            (document.head || document.documentElement).appendChild(script);
+            // 2. Inject storage-monitor for localStorage tracking
+            const storageScript = document.createElement('script');
+            storageScript.src = chrome.runtime.getURL('storage-monitor.js');
+            storageScript.onload = () => { storageScript.remove(); checkAndNotifyChanges(); };
+            (document.head || document.documentElement).appendChild(storageScript);
 
-            // Setup storage event listener
             window.addEventListener('storage', (e) => {
-                if (e.key && e.key.startsWith('rudder_batch')) {
-                    checkAndNotifyChanges();
-                }
+                if (e.key && e.key.startsWith('rudder')) checkAndNotifyChanges();
             });
-
-            // Setup custom event listener
             window.addEventListener('rudderstack_storage_changed', checkAndNotifyChanges);
 
-            // Backup interval checker
             monitoringInterval = setInterval(checkAndNotifyChanges, 1000);
-
         } catch (e) {
-            console.error('Error in setupMonitoring:', e);
+            console.error('[RS Content] Error in setupMonitoring:', e);
             cleanup();
         }
     }
 
-    // Connection error handler
     function handleConnectionError() {
-        try {
-            cleanup();
-            
-            if (chrome.runtime && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-                reconnectAttempts++;
-                setTimeout(setupConnection, 1000 * Math.pow(2, reconnectAttempts));
-            }
-        } catch (e) {
-            console.log('Error in handleConnectionError:', e);
+        cleanup();
+        if (chrome.runtime && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            reconnectAttempts++;
+            setTimeout(setupConnection, 1000 * Math.pow(2, reconnectAttempts));
         }
     }
 
-    // Cleanup function
     function cleanup() {
-        try {
-            if (monitoringInterval) {
-                clearInterval(monitoringInterval);
-                monitoringInterval = null;
-            }
-
-            if (port) {
-                try {
-                    port.disconnect();
-                } catch (e) {
-                    console.log('Error disconnecting port:', e);
-                }
-                port = null;
-            }
-
-            batchEvents = [];
-            processedBatchEvents.clear();
-			lastBatchTimestamp = 0; 
-            isExtensionActive = false;
-            lastProcessedState = {};
-
-        } catch (e) {
-            console.log('Error in cleanup:', e);
-        }
+        if (monitoringInterval) { clearInterval(monitoringInterval); monitoringInterval = null; }
+        if (port) { try { port.disconnect(); } catch(e) {} port = null; }
+        isExtensionActive = false;
     }
 
-    // Setup connection
     function setupConnection() {
         try {
-            if (!chrome.runtime) {
-                cleanup();
-                return;
-            }
+            if (!chrome.runtime) { cleanup(); return; }
+            if (port) { try { port.disconnect(); } catch(e) {} port = null; }
+            isExtensionActive = true;
 
-            cleanup();
             port = chrome.runtime.connect({ name: 'rudderstack-monitor' });
-            
+
             port.onMessage.addListener((message) => {
-				try {
-					if (message.type === 'batchRequest') {
-						 //cleared state
-						if (lastBatchTimestamp === 0) {
-							console.log('Processing batch after clear');
-							processedBatchEvents.clear(); // Ensure clean slate
-						}
-						// Check if this batch is newer than our last processed batch
-						if (message.timestamp <= lastBatchTimestamp) {
-							console.log('Skipping older or duplicate batch:', {
-								currentTimestamp: message.timestamp,
-								lastProcessedTimestamp: lastBatchTimestamp
-							});
-							return;
-						}
-
-						/*console.log('Raw Batch data received:', {
-							type: message.type,
-							timestamp: message.timestamp,
-							dataLength: message.data?.length || 0
-						});*/
-
-						// Update last batch timestamp
-						lastBatchTimestamp = message.timestamp;
-						
-						// Process new batch events
-						const newBatchEvents = [];
-						
-						message.data.forEach(event => {
-							const eventKey = event.event || event.type;
-							const existingEvent = processedBatchEvents.get(eventKey);
-							
-							if (!existingEvent || existingEvent.timestamp < message.timestamp) {
-								newBatchEvents.push(event);
-								processedBatchEvents.set(eventKey, {
-									timestamp: message.timestamp,
-									key: eventKey
-								});
-								/*console.log('Processing batch event:', {
-									type: eventKey,
-									timestamp: message.timestamp
-								});*/
-							}
-						});
-
-						if (newBatchEvents.length > 0) {
-							batchEvents = newBatchEvents.map(event => ({
-								...event,
-								timestamp: message.timestamp
-							}));
-							
-							/*console.log('New batch events to be displayed:', 
-								batchEvents.map(event => ({
-									type: event.event || event.type,
-									timestamp: event.timestamp
-								}))
-							);*/
-							checkAndNotifyChanges();
-						} else {
-							console.log('No new events to process in this batch');
-						}
-					}
-				} catch (e) {
-					console.error('Error processing batch events:', {
-						error: e.message,
-						stack: e.stack,
-						messageType: message?.type,
-						messageData: JSON.stringify(message?.data, null, 2)
-					});
-				}
-			});
-
-            port.onDisconnect.addListener(() => {
-                try {
-                    if (chrome.runtime.lastError) {
-                        cleanup();
-                    }
-                } catch (e) {
-                    console.log('Error in disconnect listener:', e);
+                // background ممکنه pattern update بفرسته
+                if (message.type === 'patternUpdate' && message.pattern) {
+                    interceptorInjected = false; // re-inject with new pattern
+                    injectInterceptor(message.pattern);
                 }
             });
 
-            isExtensionActive = true;
-            setupMonitoring();
+            port.onDisconnect.addListener(() => {
+                try { if (chrome.runtime.lastError) cleanup(); } catch(e) {}
+            });
+
+            // Read pattern then start monitoring
+            chrome.storage.local.get(['batchUrlPattern'], (result) => {
+                const pattern = result.batchUrlPattern || '/beacon/v1/batch';
+                setupMonitoring(pattern);
+            });
+
         } catch (e) {
-            console.log('Error in setupConnection:', e);
+            console.log('[RS Content] Error in setupConnection:', e);
             cleanup();
         }
     }
 
-    // Cleanup old processed events periodically
-    setInterval(() => {
-        const now = Date.now();
-        for (const [key, data] of processedBatchEvents.entries()) {
-            if (now - data.timestamp > 5000) {
-                processedBatchEvents.delete(key);
-            }
-        }
-    }, 5000);
-
-    // Initialize
     try {
-        if (chrome.runtime) {
-            setupConnection();
-        }
+        if (chrome.runtime) setupConnection();
     } catch (e) {
-        console.log('Error during initialization:', e);
+        console.log('[RS Content] Error during initialization:', e);
     }
 
-	// Cleanup on beforeunload
-	window.addEventListener('beforeunload', () => {
-		try {
-			cleanup();
-		} catch (e) {
-			console.log('Error during beforeunload cleanup:', e);
-		}
-	});
+    window.addEventListener('beforeunload', () => {
+        try { cleanup(); } catch(e) {}
+    });
 })();
