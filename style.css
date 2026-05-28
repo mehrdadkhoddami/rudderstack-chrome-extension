@@ -273,7 +273,7 @@ body.clear-list::after { opacity: 1; }
 .item:hover {
   box-shadow: var(--shadow);
   border-color: rgba(79,110,247,.2);
-  transform: translateY(-1px);
+  /*transform: translateY(-1px);*/
 }
 
 /* Left accent bar */
@@ -285,26 +285,38 @@ body.clear-list::after { opacity: 1; }
   bottom: 0;
   width: 3px;
   background: var(--surface-3);
+  background: linear-gradient(180deg, var(--surface-3) 0%, var(--surface-3) 100%) !important;
   transition: var(--transition);
   z-index: 1;
 }
-.item:hover::before { background: var(--brand); }
 
 /* ── Sent item ───────────────────────────────────────────────── */
 .sent-item {
   border-style: solid;
   opacity: 0.85;
 }
-.sent-item::before { background: var(--sent-color) !important; }
+.sent-item::before {
+  background: var(--sent-color) !important;
+  background: linear-gradient(180deg, var(--sent-color) 0%, var(--sent-color) 100%) !important;
+}
 .sent-item:hover { opacity: 1; }
 
 /* ── Batch item ──────────────────────────────────────────────── */
-.batch-item::before { background: var(--batch-color) !important; }
+.batch-item::before {
+  background: var(--batch-color) !important;
+  background: linear-gradient(180deg, var(--batch-color) 0%, var(--batch-color) 100%) !important;
+}
 
 /* ── Sent & Batch item ──────────────────────────────────────────────── */
 .sent-item.batch-item::before {
-	background: #22C55E !important;
-	background: linear-gradient(180deg, var(--sent-color) 0%, var(--batch-color) 100%) !important;
+  background: #22C55E !important;
+  background: linear-gradient(180deg, var(--sent-color) 0%, var(--batch-color) 100%) !important;
+}
+
+
+.item:hover::before {
+  background: var(--brand)!important;
+ background: linear-gradient(180deg, var(--brand) 0%, var(--brand) 100%) !important;
 }
 
 /* ── New item animation ──────────────────────────────────────── */

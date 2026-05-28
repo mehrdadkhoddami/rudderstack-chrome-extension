@@ -1,6 +1,6 @@
-// background.js (Manifest V3 service worker compatible)
+// background.js (Manifest V3 service worker)
 
-const connections = new Map();
+const connections = new Map(); // tabId → port
 const DEFAULT_BATCH_PATTERN = '/beacon/v1/batch';
 let cachedBatchPattern = DEFAULT_BATCH_PATTERN;
 let _debugEnabled = false;
@@ -11,80 +11,78 @@ function rsWarn(...args) { if (_debugEnabled) console.warn(...args); }
 // ── Keep service worker alive ─────────────────────────────────────────────────
 function keepAlive() {
   if (connections.size > 0) {
-    try { chrome.runtime.getPlatformInfo(() => {}); } catch (e) {}
+    try { chrome.runtime.getPlatformInfo(() => {}); } catch(e) {}
     setTimeout(keepAlive, 20000);
   }
 }
 
+// ── Load settings ─────────────────────────────────────────────────────────────
 chrome.storage.local.get(['batchUrlPattern', 'enableDebug'], (result) => {
   cachedBatchPattern = result.batchUrlPattern || DEFAULT_BATCH_PATTERN;
   _debugEnabled = result.enableDebug === true;
-  rsLog('[RS BG] Loaded batch pattern:', cachedBatchPattern);
+  rsLog('[RS BG] Loaded pattern:', cachedBatchPattern);
 });
 
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.batchUrlPattern) {
     cachedBatchPattern = changes.batchUrlPattern.newValue || DEFAULT_BATCH_PATTERN;
-    rsLog('[RS BG] Batch pattern updated:', cachedBatchPattern);
+    rsLog('[RS BG] Pattern updated:', cachedBatchPattern);
     connections.forEach((port) => {
-      try { port.postMessage({ type: 'patternUpdate', pattern: cachedBatchPattern }); } catch (e) {}
+      try { port.postMessage({ type: 'patternUpdate', pattern: cachedBatchPattern }); } catch(e) {}
     });
   }
-  if (changes.enableDebug) {
-    _debugEnabled = changes.enableDebug.newValue === true;
-  }
+  if (changes.enableDebug) _debugEnabled = changes.enableDebug.newValue === true;
 });
 
-// ── Broadcast batch events to sidepanel ───────────────────────────────────────
+// ── Broadcast: tabId حتماً باید معتبر باشه ───────────────────────────────────
+// اگه tabId نامعتبره → drop. هرگز به تب اشتباه assign نکن.
 function broadcastBatch(batch, sourceTabId, timestamp, via) {
-  rsLog(`[RS BG] Broadcasting ${batch.length} events (via ${via}, tabId=${sourceTabId})`);
-  batch.forEach((ev, i) => {
-    rsLog(`[RS BG]   [${i}] type=${ev.type} | event="${ev.event || ev.name || '-'}" | msgId=${ev.messageId}`);
-  });
+  if (!sourceTabId || sourceTabId < 0) {
+    rsLog(`[RS BG] broadcastBatch: invalid tabId=${sourceTabId}, DROP (via ${via})`);
+    return;
+  }
+  rsLog(`[RS BG] broadcastBatch ${batch.length} events | tabId=${sourceTabId} | via=${via}`);
 
-  const payload = {
+  chrome.runtime.sendMessage({
     type: 'updatePopup',
     data: batch,
     tabId: sourceTabId,
     timestamp: timestamp || Date.now(),
     source: 'network',
-  };
-
-  chrome.runtime.sendMessage(payload).catch(() => {});
-
-  if (sourceTabId === -1 || sourceTabId === undefined || sourceTabId === null) {
-    connections.forEach((port, connTabId) => {
-      if (connTabId !== sourceTabId) {
-        chrome.runtime.sendMessage({ ...payload, tabId: connTabId }).catch(() => {});
-      }
-    });
-  }
+  }).catch(() => {});
 }
 
-// ── webRequest: fallback ──────────────────────────────────────────────────────
+// ── webRequest fallback ───────────────────────────────────────────────────────
+// فقط وقتی interceptor.js نتونه capture کنه (مثلاً HTTPS compression)
+// برای جلوگیری از duplicate: اگه content script connected هست برای این تب،
+// به interceptor.js اعتماد می‌کنیم و webRequest رو skip می‌کنیم
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.method !== 'POST') return;
     if (!details.url.includes(cachedBatchPattern)) return;
+    if (!details.tabId || details.tabId < 0) return;
 
-    rsLog('[RS BG] webRequest matched:', details.url, '| tabId:', details.tabId);
+    // اگه content script برای این تب connected هست، interceptor.js handle می‌کنه
+    // webRequest رو skip کن تا duplicate نشه
+    if (connections.has(details.tabId)) {
+      rsLog(`[RS BG] webRequest: tab ${details.tabId} has content script, skipping (interceptor handles)`);
+      return;
+    }
+
+    rsLog('[RS BG] webRequest fallback for tabId:', details.tabId);
 
     try {
-      if (!details.requestBody || !details.requestBody.raw || !details.requestBody.raw.length) {
-        rsLog('[RS BG] requestBody.raw empty — interceptor.js will handle');
-        return;
-      }
+      if (!details.requestBody?.raw?.length) return;
       const chunks = details.requestBody.raw
-        .filter(c => c.bytes && c.bytes.byteLength > 0)
+        .filter(c => c.bytes?.byteLength > 0)
         .map(c => new TextDecoder('utf-8').decode(c.bytes));
       if (!chunks.length) return;
 
       const parsed = JSON.parse(chunks.join(''));
-      if (!parsed || !Array.isArray(parsed.batch) || !parsed.batch.length) return;
+      if (!Array.isArray(parsed?.batch) || !parsed.batch.length) return;
 
-      rsLog('[RS BG] webRequest fallback captured', parsed.batch.length, 'events');
-      broadcastBatch(parsed.batch, details.tabId, Date.now(), 'webRequest');
-    } catch (e) {
+      broadcastBatch(parsed.batch, details.tabId, Date.now(), 'webRequest-fallback');
+    } catch(e) {
       rsWarn('[RS BG] webRequest parse error:', e.message);
     }
   },
@@ -92,18 +90,20 @@ chrome.webRequest.onBeforeRequest.addListener(
   ['requestBody']
 );
 
-// ── Handle connections from content scripts ───────────────────────────────────
+// ── Content script connections ────────────────────────────────────────────────
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'rudderstack-monitor') return;
 
-  const tabId = port.sender.tab.id;
-  connections.set(tabId, port);
-  rsLog('[RS BG] Content script connected, tabId:', tabId);
+  const tabId = port.sender?.tab?.id;
+  if (!tabId) { rsWarn('[RS BG] onConnect: no tabId in sender'); return; }
 
+  connections.set(tabId, port);
+  rsLog('[RS BG] Connected, tabId:', tabId);
   if (connections.size === 1) keepAlive();
 
   port.onMessage.addListener((message) => {
     if (message.type === 'storageChanged') {
+      // localStorage events — tabId مشخص هست از port
       chrome.runtime.sendMessage({
         type: 'updatePopup',
         data: message.data,
@@ -113,28 +113,27 @@ chrome.runtime.onConnect.addListener((port) => {
 
     } else if (message.type === 'batchCaptured') {
       if (!Array.isArray(message.data) || !message.data.length) return;
-      rsLog(`[RS BG] batchCaptured from content script (tabId=${tabId}): ${message.data.length} events`);
+      rsLog(`[RS BG] batchCaptured tabId=${tabId}: ${message.data.length} events`);
+      // tabId از port میاد — همیشه معتبره
       broadcastBatch(message.data, tabId, message.timestamp, 'interceptor.js');
     }
   });
 
   port.onDisconnect.addListener(() => {
     connections.delete(tabId);
-    rsLog('[RS BG] Content script disconnected, tabId:', tabId);
+    rsLog('[RS BG] Disconnected, tabId:', tabId);
   });
 });
 
-// ── Install / click handlers ──────────────────────────────────────────────────
+// ── Install / click ───────────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setOptions({ path: 'sidepanel.html', enabled: true });
   chrome.storage.local.get(['batchUrlPattern'], (result) => {
-    if (!result.batchUrlPattern) {
-      chrome.storage.local.set({ batchUrlPattern: DEFAULT_BATCH_PATTERN });
-    }
+    if (!result.batchUrlPattern) chrome.storage.local.set({ batchUrlPattern: DEFAULT_BATCH_PATTERN });
   });
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
   try { await chrome.sidePanel.open({ tabId: tab.id }); }
-  catch (e) { console.error('[RS BG] Error opening side panel:', e); }
+  catch(e) { console.error('[RS BG] Error opening side panel:', e); }
 });
