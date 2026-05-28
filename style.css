@@ -40,9 +40,9 @@
   --new-bg:       rgba(239,68,68,.08);
 
   /* JSON */
-  --j-key:        #7C4DFF;
-  --j-str:        #0D9488;
-  --j-num:        #EA580C;
+  --j-key:        #986801;
+  --j-str:        #3949AB;
+  --j-num:        #1E88E5;
   --j-bool-t:     #16A34A;
   --j-bool-f:     #DC2626;
   --j-null:       #9BA3B8;
@@ -545,7 +545,7 @@ pre.value {
 }
 
 /* JSON Syntax */
-.json-key     { color: var(--j-key); font-weight: 500; }
+.json-key     { color: var(--j-key); font-weight: 500; font-style: italic; }
 .json-string  { color: var(--j-str); }
 .json-int,
 .json-float   { color: var(--j-num); }
