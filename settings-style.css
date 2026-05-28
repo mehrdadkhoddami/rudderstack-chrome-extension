@@ -172,6 +172,7 @@ body {
   border-radius: var(--radius);
   padding: 12px 14px;
   margin-bottom: 20px;
+  direction: rtl;
 }
 
 .info-box svg { fill: var(--brand); flex-shrink: 0; margin-top: 1px; }
@@ -348,3 +349,73 @@ button {
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.success { background: #16A34A; }
 .toast.error   { background: var(--danger); }
+
+/* ── Toggle Switch ── */
+.toggle-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.toggle-field:last-child { border-bottom: none; padding-bottom: 0; }
+.toggle-field:first-of-type { padding-top: 0; }
+
+.toggle-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toggle-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.toggle-desc {
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.toggle-switch {
+  position: relative;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.toggle-switch input { display: none; }
+
+.toggle-track {
+  display: block;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--border);
+  border: 1.5px solid var(--border);
+  transition: var(--transition);
+  position: relative;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  transition: var(--transition);
+}
+
+.toggle-switch input:checked + .toggle-track {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.toggle-switch input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(18px);
+}

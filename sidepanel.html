@@ -6,20 +6,20 @@
   <title>RudderStack Tracker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="style.css">
+  
 </head>
 <body class="sidepanel">
 
   <!-- ── Top Toolbar ── -->
   <div class="header">
-    <!--<a class="brand-pill" title="RudderStack Tracker">
+	<!--<a class="brand-pill" title="RudderStack Tracker">
       <div class="brand-icon">
         <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
       </div>
       <span class="brand-name">RS·Tracker</span>
-    </a>
+    </a>-->
 
-    <div class="live-dot" title="Monitoring active"></div>-->
-
+    <!--<div class="live-dot" title="Monitoring active"></div>-->
     <div class="filter-container">
       <input type="text" id="filter-input" placeholder="Filter events…" autocomplete="off" spellcheck="false">
       <button class="clear-btn" id="clear-btn" title="Clear filter">×</button>
@@ -38,58 +38,10 @@
     </div>
   </div>
 
-  <!-- ── Stats Bar ── -->
-  <!--<div class="stats-bar" id="statsBar">
-    <div class="stat-item">
-      <span class="stat-dot sent"></span>
-      <span id="statSent" class="stat-value">0</span>
-      <span>sent</span>
-    </div>
-    <div class="stats-sep"></div>
-    <div class="stat-item">
-      <span class="stat-dot queued"></span>
-      <span id="statQueued" class="stat-value">0</span>
-      <span>queued</span>
-    </div>
-    <div class="stats-sep"></div>
-    <div class="stat-item">
-      <span class="stat-dot batch"></span>
-      <span id="statBatch" class="stat-value">0</span>
-      <span>batch</span>
-    </div>
-  </div>-->
-
   <!-- ── Event List ── -->
   <div id="localStorage-items"></div>
 
   <script src="popup.js"></script>
-  <script>
-    // Settings button
-    document.getElementById('settingsBtn').addEventListener('click', () => {
-      chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
-    });
-
-    // ── Live stats updater ─────────────────────────────────────
-    function updateStats() {
-      if (typeof allItems === 'undefined') return;
-      const total   = allItems.size;
-      const sent    = sentMessageIds ? sentMessageIds.size : 0;
-      const queued  = total - sent;
-      const batch   = [...allItems.values()].filter(v => v.source === 'batch').length;
-
-      document.getElementById('statSent').textContent   = sent;
-      document.getElementById('statQueued').textContent = queued > 0 ? queued : 0;
-      document.getElementById('statBatch').textContent  = batch;
-    }
-
-    // Poll every second after items load
-    setInterval(updateStats, 1000);
-
-    // Hook into renderAll if possible
-    const _origRender = window.renderAll;
-    if (typeof _origRender === 'function') {
-      window.renderAll = function() { _origRender(); updateStats(); };
-    }
-  </script>
+  <script src="sidepanel-init.js"></script>
 </body>
 </html>

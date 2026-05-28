@@ -10,8 +10,13 @@
   /* Brand */
   --brand:        #4F6EF7;
   --brand-dim:    #3A56D4;
-  --brand-glow:   rgba(79,110,247,.18);
-  --brand-muted:  rgba(79,110,247,.08);
+  --brand-glow:    rgba(79, 110, 247, 0.25);
+  --brand-shadow:  rgba(58, 86, 212, 0.12);
+  --brand-muted: rgba(79, 110, 247, 0.06);
+  
+  /* Table */
+  --table-stripe: rgba(0, 0, 0, 0.015);
+  --table-hover: rgba(79, 110, 247, 0.08);
 
   /* Surface */
   --bg:           #F4F5F9;
@@ -29,10 +34,10 @@
   /* Status */
   --sent-color:   #22C55E;
   --sent-bg:      rgba(34,197,94,.10);
-  --new-color:    #F59E0B;
-  --new-bg:       rgba(245,158,11,.10);
-  --batch-color:  #EF4444;
-  --batch-bg:     rgba(239,68,68,.08);
+  --batch-color:  #F59E0B;
+  --batch-bg:     rgba(245,158,11,.10);
+  --new-color:    #EF4444;
+  --new-bg:       rgba(239,68,68,.08);
 
   /* JSON */
   --j-key:        #7C4DFF;
@@ -47,8 +52,8 @@
   --radius:       10px;
   --radius-lg:    14px;
   --radius-xl:    18px;
-  --shadow-sm:    0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
-  --shadow:       0 4px 12px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.05);
+  --shadow-sm:     0 2px 4px rgba(0,0,0,0.02), 0 1px 2px var(--brand-shadow);
+  --shadow:        0 12px 24px rgba(0,0,0,0.04), 0 4px 12px var(--brand-shadow);
   --shadow-lg:    0 12px 32px rgba(0,0,0,.10), 0 4px 8px rgba(0,0,0,.06);
 
   --transition:   all .2s cubic-bezier(.4,0,.2,1);
@@ -62,6 +67,9 @@
     --brand-dim:    #5470E8;
     --brand-glow:   rgba(108,138,255,.20);
     --brand-muted:  rgba(108,138,255,.08);
+	
+	--table-stripe: rgba(255, 255, 255, 0.02);
+    --table-hover: rgba(108, 138, 255, 0.15);
 
     --bg:           #0E1017;
     --surface:      #161922;
@@ -160,7 +168,7 @@ body.sidepanel {
   width: 100%;
   height: 34px;
   padding: 0 30px 0 30px;
-  border: 1.5px solid var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-2);
   color: var(--text-1);
@@ -206,7 +214,7 @@ body.sidepanel {
   gap: 5px;
   height: 34px;
   padding: 0 12px;
-  border: 1.5px solid var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-2);
   color: var(--text-2);
@@ -254,7 +262,7 @@ body.clear-list::after { opacity: 1; }
 /* ── Event Card ──────────────────────────────────────────────── */
 .item {
   position: relative;
-  border: 1.5px solid var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
@@ -278,6 +286,7 @@ body.clear-list::after { opacity: 1; }
   width: 3px;
   background: var(--surface-3);
   transition: var(--transition);
+  z-index: 1;
 }
 .item:hover::before { background: var(--brand); }
 
@@ -292,20 +301,44 @@ body.clear-list::after { opacity: 1; }
 /* ── Batch item ──────────────────────────────────────────────── */
 .batch-item::before { background: var(--batch-color) !important; }
 
+/* ── Sent & Batch item ──────────────────────────────────────────────── */
+.sent-item.batch-item::before {
+	background: #22C55E !important;
+	background: linear-gradient(180deg, var(--sent-color) 0%, var(--batch-color) 100%) !important;
+}
+
 /* ── New item animation ──────────────────────────────────────── */
 @keyframes slideIn {
-  from { opacity: 0; transform: translateY(-8px) scale(.98); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from { 
+    opacity: 0; 
+    transform: translateY(6px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
 }
 
 @keyframes glowPulse {
-  0%, 100% { box-shadow: var(--shadow-sm), 0 0 0 0 var(--brand-glow); }
-  50%      { box-shadow: var(--shadow), 0 0 0 4px var(--brand-glow); }
+  0% { 
+    box-shadow: var(--shadow-sm), 0 0 0 0 rgba(79, 110, 247, 0);
+  }
+  30% { 
+    box-shadow: var(--shadow), 
+                0 0 0 1px var(--brand-dim), 
+                0 0 20px 2px var(--brand-glow);
+  }
+  100% { 
+    box-shadow: var(--shadow-sm), 0 0 0 0 rgba(79, 110, 247, 0);
+  }
 }
 
 .item.new-item {
-  animation: slideIn .35s cubic-bezier(.34,1.56,.64,1) forwards,
-             glowPulse 2s ease 0.35s 3;
+  border: 1px solid var(--border);
+  will-change: transform, opacity, box-shadow;
+  
+  animation: slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+             glowPulse 2.5s ease-in-out 0.4s 1 forwards; 
 }
 
 /* ── Badges (NEW / corner tags) ──────────────────────────────── */
@@ -390,6 +423,8 @@ body.clear-list::after { opacity: 1; }
   font-size: 10px;
   color: var(--text-3);
   letter-spacing: .3px;
+  padding: 1px 0px;
+  margin-right: 5px;
 }
 
 /* ── Chevron Toggle ──────────────────────────────────────────── */
@@ -462,19 +497,37 @@ body.clear-list::after { opacity: 1; }
   color: var(--text-2);
   vertical-align: top;
   font-size: 12px;
+  transition: background-color var(--transition); 
 }
 
 .json-table td:first-child {
-  font-family: var(--font-mono);
+font-family: var(--font-mono);
   color: var(--text-1);
   font-weight: 500;
   font-size: 11.5px;
-  width: 38%;
+  width: 20%; 
+  min-width: 150px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.json-table td:nth-child(2) {
+  min-width: 100px;
 }
 
 .json-table tr:last-child td { border-bottom: none; }
-.json-table tr:hover td { background: var(--brand-muted); }
+
+.json-table tr:nth-child(even) {
+  background-color: var(--table-stripe);
+}
+
+.json-table tr:hover { 
+  background-color: var(--table-hover) !important; 
+}
+
 .json-table tr { position: relative; transition: var(--transition); }
+
 
 /* ── JSON Pre ────────────────────────────────────────────────── */
 .inside-value-container { position: relative; }
@@ -509,7 +562,7 @@ pre.value {
   right: 10px;
   height: 26px;
   padding: 0 10px;
-  border: 1.5px solid var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text-2);
@@ -575,12 +628,12 @@ tr:hover .copy-icon { opacity: 0.5; }
 
 /* ── Settings Button ─────────────────────────────────────────── */
 .settings-btn {
-  display:  none;/*flex;*/
+  display:  flex;
   align-items: center;
   gap: 5px;
   height: 34px;
   padding: 0 12px;
-  border: 1.5px solid var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-2);
   color: var(--text-2);

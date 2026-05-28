@@ -7,191 +7,225 @@
 })();
 
 (() => {
-    let isExtensionActive = true;
-    let port = null;
-    let monitoringInterval = null;
-    let reconnectAttempts = 0;
-    const MAX_RECONNECT_ATTEMPTS = 5;
-    let interceptorInjected = false;
+  let isExtensionActive = true;
+  let port = null;
+  let monitoringInterval = null;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 5;
+  let interceptorInjected = false;
 
-    // ── Inject interceptor.js ────────────────────────────────────────────────
-    function injectInterceptor(pattern) {
-        if (interceptorInjected) {
-            
-            window.dispatchEvent(new CustomEvent('__rs_update_pattern', { detail: { pattern } }));
-            return;
-        }
-        interceptorInjected = true;
+  // ── Debug logging ──────────────────────────────────────────────────────────
+  let _debugEnabled = false;
+  function rsLog(...args)  { if (_debugEnabled) console.log(...args); }
+  function rsWarn(...args) { if (_debugEnabled) console.warn(...args); }
 
-        try {
-            const scriptUrl = chrome.runtime.getURL('interceptor.js');
-            const script = document.createElement('script');
-            script.src = scriptUrl;
-            script.dataset.pattern = pattern || '/beacon/v1/batch';
-            script.onload = () => {
-                script.remove();
-                console.log('[RS Content] interceptor.js injected, pattern:', pattern);
-            };
-            script.onerror = (e) => {
-                console.error('[RS Content] Failed to inject interceptor.js:', e);
-            };
-            (document.head || document.documentElement).prepend(script);
-        } catch (e) {
-            console.error('[RS Content] Error injecting interceptor:', e);
-        }
+  chrome.storage.local.get(['enableDebug'], (res) => {
+    _debugEnabled = res.enableDebug === true;
+  });
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.enableDebug) _debugEnabled = changes.enableDebug.newValue === true;
+  });
+
+  // ── Pending batch queue (captured before port is ready) ────────────────────
+  const pendingBatches = [];
+
+  function flushPendingBatches() {
+    if (!port || pendingBatches.length === 0) return;
+    rsLog(`[RS Content] Flushing ${pendingBatches.length} pending batch(es)`);
+    while (pendingBatches.length > 0) {
+      const item = pendingBatches.shift();
+      try {
+        port.postMessage({ type: 'batchCaptured', data: item.batch, timestamp: item.timestamp });
+      } catch(e) {
+        rsWarn('[RS Content] Failed to flush pending batch:', e);
+        handleConnectionError();
+        break;
+      }
     }
+  }
 
-    // ── Listen for captured batches from page context ────────────────────────
-    window.addEventListener('__rs_batch_captured', (e) => {
-        try {
-            const { batch, timestamp, sourceType } = e.detail;
-            if (!Array.isArray(batch) || !batch.length) return;
-            console.log(`[RS Content] __rs_batch_captured: ${batch.length} events via ${sourceType}`);
-            if (port) {
-                try {
-                    port.postMessage({ type: 'batchCaptured', data: batch, timestamp });
-                } catch (err) {
-                    console.warn('[RS Content] Failed to post batchCaptured to port:', err);
-                    handleConnectionError();
-                }
-            } else {
-                console.warn('[RS Content] No port available to forward batch');
-            }
-        } catch (err) {
-            console.error('[RS Content] Error handling __rs_batch_captured:', err);
-        }
-    });
-
-    // ── localStorage monitoring ──────────────────────────────────────────────
-    function safeGetLocalStorage() {
-        try {
-            const items = {};
-            if (!localStorage) return items;
-            for (let i = 0; i < localStorage.length; i++) {
-                try {
-                    const key = localStorage.key(i);
-                    if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
-                    const value = localStorage.getItem(key);
-                    if (!value) continue;
-                    try {
-                        const parsedL1 = JSON.parse(value);
-                        const parsedJson = JSON.parse(parsedL1);
-                        for (var j in parsedJson) {
-                            if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
-                            const currentItem = parsedJson[j].item.event;
-                            if (currentItem.type === 'track' || currentItem.type === 'page') {
-                                const currentKey = currentItem.messageId;
-                                if (!currentKey) continue;
-                                items[currentKey] = {
-                                    value: JSON.stringify(currentItem),
-                                    parsedValue: currentItem,
-                                    originalKey: currentItem.event || currentItem.name || currentKey,
-                                    propertiesKey: currentItem.properties || null,
-                                    timestamp: Date.now(),
-                                    source: 'localStorage'
-                                };
-                            }
-                        }
-                    } catch (parseError) {}
-                } catch (itemError) { continue; }
-            }
-            return items;
-        } catch (e) { return {}; }
+  // ── Inject interceptor.js ──────────────────────────────────────────────────
+  function injectInterceptor(pattern) {
+    if (interceptorInjected) {
+      window.dispatchEvent(new CustomEvent('__rs_update_pattern', { detail: { pattern } }));
+      return;
     }
-
-    function checkAndNotifyChanges() {
-        try {
-            if (!isExtensionActive || !chrome.runtime) { cleanup(); return; }
-            const items = safeGetLocalStorage();
-            if (port && Object.keys(items).length > 0) {
-                try {
-                    port.postMessage({ type: 'storageChanged', data: items });
-                } catch (e) { handleConnectionError(); }
-            }
-        } catch (e) { console.error('[RS Content] Error in checkAndNotifyChanges:', e); }
-    }
-
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        if (message.type === 'clearAll') sendResponse({ success: true });
-        return true;
-    });
-
-    function setupMonitoring(pattern) {
-        try {
-            if (!isExtensionActive || !chrome.runtime) { cleanup(); return; }
-            if (monitoringInterval) clearInterval(monitoringInterval);
-
-            injectInterceptor(pattern);
-
-            const storageScript = document.createElement('script');
-            storageScript.src = chrome.runtime.getURL('storage-monitor.js');
-            storageScript.onload = () => { storageScript.remove(); checkAndNotifyChanges(); };
-            (document.head || document.documentElement).appendChild(storageScript);
-
-            window.addEventListener('storage', (e) => {
-                if (e.key && e.key.startsWith('rudder')) checkAndNotifyChanges();
-            });
-            window.addEventListener('rudderstack_storage_changed', checkAndNotifyChanges);
-
-            monitoringInterval = setInterval(checkAndNotifyChanges, 1000);
-        } catch (e) {
-            console.error('[RS Content] Error in setupMonitoring:', e);
-            cleanup();
-        }
-    }
-
-    function handleConnectionError() {
-        cleanup();
-        if (chrome.runtime && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            reconnectAttempts++;
-            setTimeout(setupConnection, 1000 * Math.pow(2, reconnectAttempts));
-        }
-    }
-
-    function cleanup() {
-        if (monitoringInterval) { clearInterval(monitoringInterval); monitoringInterval = null; }
-        if (port) { try { port.disconnect(); } catch(e) {} port = null; }
-        isExtensionActive = false;
-    }
-
-    function setupConnection() {
-        try {
-            if (!chrome.runtime) { cleanup(); return; }
-            if (port) { try { port.disconnect(); } catch(e) {} port = null; }
-            isExtensionActive = true;
-
-            port = chrome.runtime.connect({ name: 'rudderstack-monitor' });
-
-            port.onMessage.addListener((message) => {
-                if (message.type === 'patternUpdate' && message.pattern) {
-                    console.log('[RS Content] Pattern updated from background:', message.pattern);
-                    // interceptor قبلاً inject شده، فقط event می‌زنیم
-                    injectInterceptor(message.pattern);
-                }
-            });
-
-            port.onDisconnect.addListener(() => {
-                try { if (chrome.runtime.lastError) cleanup(); } catch(e) {}
-            });
-
-            chrome.storage.local.get(['batchUrlPattern'], (result) => {
-                const pattern = result.batchUrlPattern || '/beacon/v1/batch';
-                setupMonitoring(pattern);
-            });
-
-        } catch (e) {
-            console.log('[RS Content] Error in setupConnection:', e);
-            cleanup();
-        }
-    }
+    interceptorInjected = true;
 
     try {
-        if (chrome.runtime) setupConnection();
+      const scriptUrl = chrome.runtime.getURL('interceptor.js');
+      const script = document.createElement('script');
+      script.src = scriptUrl;
+      script.dataset.pattern = pattern || '/beacon/v1/batch';
+      script.onload = () => {
+        script.remove();
+        rsLog('[RS Content] interceptor.js injected, pattern:', pattern);
+      };
+      script.onerror = (e) => {
+        rsWarn('[RS Content] Failed to inject interceptor.js:', e);
+      };
+      (document.head || document.documentElement).prepend(script);
     } catch (e) {
-        console.log('[RS Content] Error during initialization:', e);
+      rsWarn('[RS Content] Error injecting interceptor:', e);
     }
+  }
 
-    window.addEventListener('beforeunload', () => {
-        try { cleanup(); } catch(e) {}
-    });
+  // ── Listen for captured batches from page context ──────────────────────────
+  window.addEventListener('__rs_batch_captured', (e) => {
+    try {
+      const { batch, timestamp, sourceType } = e.detail;
+      if (!Array.isArray(batch) || !batch.length) return;
+      rsLog(`[RS Content] __rs_batch_captured: ${batch.length} events via ${sourceType}`);
+
+      if (port) {
+        try {
+          port.postMessage({ type: 'batchCaptured', data: batch, timestamp });
+        } catch (err) {
+          rsWarn('[RS Content] Failed to post batchCaptured, queuing:', err);
+          pendingBatches.push({ batch, timestamp });
+          handleConnectionError();
+        }
+      } else {
+        // Port not ready yet — queue and send once connected
+        rsLog('[RS Content] Port not ready, queuing batch');
+        pendingBatches.push({ batch, timestamp });
+      }
+    } catch (err) {
+      rsWarn('[RS Content] Error handling __rs_batch_captured:', err);
+    }
+  });
+
+  // ── localStorage monitoring ────────────────────────────────────────────────
+  function safeGetLocalStorage() {
+    try {
+      const items = {};
+      if (!localStorage) return items;
+      for (let i = 0; i < localStorage.length; i++) {
+        try {
+          const key = localStorage.key(i);
+          if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
+          const value = localStorage.getItem(key);
+          if (!value) continue;
+          try {
+            const parsedL1 = JSON.parse(value);
+            const parsedJson = JSON.parse(parsedL1);
+            for (var j in parsedJson) {
+              if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
+              const currentItem = parsedJson[j].item.event;
+              if (currentItem.type === 'track' || currentItem.type === 'page') {
+                const currentKey = currentItem.messageId;
+                if (!currentKey) continue;
+                items[currentKey] = {
+                  value: JSON.stringify(currentItem),
+                  parsedValue: currentItem,
+                  originalKey: currentItem.event || currentItem.name || currentKey,
+                  propertiesKey: currentItem.properties || null,
+                  timestamp: Date.now(),
+                  source: 'localStorage'
+                };
+              }
+            }
+          } catch (parseError) {}
+        } catch (itemError) { continue; }
+      }
+      return items;
+    } catch (e) { return {}; }
+  }
+
+  function checkAndNotifyChanges() {
+    try {
+      if (!isExtensionActive || !chrome.runtime) { cleanup(); return; }
+      const items = safeGetLocalStorage();
+      if (port && Object.keys(items).length > 0) {
+        try {
+          port.postMessage({ type: 'storageChanged', data: items });
+        } catch (e) { handleConnectionError(); }
+      }
+    } catch (e) { rsWarn('[RS Content] Error in checkAndNotifyChanges:', e); }
+  }
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'clearAll') sendResponse({ success: true });
+    return true;
+  });
+
+  function setupMonitoring(pattern) {
+    try {
+      if (!isExtensionActive || !chrome.runtime) { cleanup(); return; }
+      if (monitoringInterval) clearInterval(monitoringInterval);
+
+      injectInterceptor(pattern);
+
+      const storageScript = document.createElement('script');
+      storageScript.src = chrome.runtime.getURL('storage-monitor.js');
+      storageScript.onload = () => { storageScript.remove(); checkAndNotifyChanges(); };
+      (document.head || document.documentElement).appendChild(storageScript);
+
+      window.addEventListener('storage', (e) => {
+        if (e.key && e.key.startsWith('rudder')) checkAndNotifyChanges();
+      });
+      window.addEventListener('rudderstack_storage_changed', checkAndNotifyChanges);
+
+      monitoringInterval = setInterval(checkAndNotifyChanges, 1000);
+    } catch (e) {
+      rsWarn('[RS Content] Error in setupMonitoring:', e);
+      cleanup();
+    }
+  }
+
+  function handleConnectionError() {
+    cleanup();
+    if (chrome.runtime && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++;
+      setTimeout(setupConnection, 1000 * Math.pow(2, reconnectAttempts));
+    }
+  }
+
+  function cleanup() {
+    if (monitoringInterval) { clearInterval(monitoringInterval); monitoringInterval = null; }
+    if (port) { try { port.disconnect(); } catch(e) {} port = null; }
+    isExtensionActive = false;
+  }
+
+  function setupConnection() {
+    try {
+      if (!chrome.runtime) { cleanup(); return; }
+      if (port) { try { port.disconnect(); } catch(e) {} port = null; }
+      isExtensionActive = true;
+
+      port = chrome.runtime.connect({ name: 'rudderstack-monitor' });
+
+      port.onMessage.addListener((message) => {
+        if (message.type === 'patternUpdate' && message.pattern) {
+          rsLog('[RS Content] Pattern updated from background:', message.pattern);
+          injectInterceptor(message.pattern);
+        }
+      });
+
+      port.onDisconnect.addListener(() => {
+        try { if (chrome.runtime.lastError) cleanup(); } catch(e) {}
+      });
+
+      chrome.storage.local.get(['batchUrlPattern'], (result) => {
+        const pattern = result.batchUrlPattern || '/beacon/v1/batch';
+        setupMonitoring(pattern);
+        // Flush any batches that arrived before port was ready
+        flushPendingBatches();
+      });
+
+    } catch (e) {
+      rsLog('[RS Content] Error in setupConnection:', e);
+      cleanup();
+    }
+  }
+
+  try {
+    if (chrome.runtime) setupConnection();
+  } catch (e) {
+    rsLog('[RS Content] Error during initialization:', e);
+  }
+
+  window.addEventListener('beforeunload', () => {
+    try { cleanup(); } catch(e) {}
+  });
 })();

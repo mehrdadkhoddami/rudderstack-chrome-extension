@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RS Tracker — Settings</title>
+  <title>RS·Tracker — Settings</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="settings-style.css">
 </head>
@@ -61,12 +61,43 @@
           <span class="chip" data-value="/dataplane/v1/batch">/dataplane/v1/batch</span>
         </div>
       </div>
+    </div>
 
-      <div class="actions">
+    <!-- ── Display Settings Card ── -->
+    <div class="card">
+      <div class="card-title">Display</div>
+
+      <div class="toggle-field">
+        <div class="toggle-info">
+          <span class="toggle-label">Show JSON Viewer</span>
+          <span class="toggle-desc">نمایش بخش raw JSON و دکمه Copy در زیر جدول properties</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="showJsonViewer" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- ── Developer Settings Card ── -->
+    <div class="card">
+      <div class="card-title">Developer</div>
+
+      <div class="toggle-field">
+        <div class="toggle-info">
+          <span class="toggle-label">Enable Debug Logging</span>
+          <span class="toggle-desc">فعال‌سازی console.log ها در background, content script و interceptor</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="enableDebug">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+    </div>
+    <div class="actions">
         <button class="btn-secondary" id="resetBtn">Reset to default</button>
         <button class="btn-primary"   id="saveBtn">Save settings</button>
       </div>
-    </div>
 
   </div>
 
