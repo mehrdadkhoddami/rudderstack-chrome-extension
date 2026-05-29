@@ -234,17 +234,12 @@ function ingestBatchEvents(batchArray, timestamp, targetTabId) {
         msgId,
       });
       newCount++;
-    } else {
-      // Item already exists (came from localStorage) — upgrade it to batch source
-      // so the BATCH badge appears and the left-bar color updates correctly.
-      const existing = cache.items.get(key);
-      if (existing.source !== 'batch') {
-        existing.source = 'batch';
-        existing.parsedValue = event;
-        existing.value = JSON.stringify(event);
-        existing.propertiesKey = event.properties || existing.propertiesKey || null;
-        newCount++; // trigger re-render so DOM reflects the source change
-      }
+	} else {
+      // Item already exists — it was seen in localStorage before the batch arrived.
+      // Do NOT change its source to 'batch'; it should only get the SENT badge
+      // (via sentIds above), not the BATCH badge.
+      // BATCH badge is only for events that arrive via network without ever appearing
+      // in localStorage first.
     }
   });
 
