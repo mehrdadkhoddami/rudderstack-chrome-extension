@@ -50,8 +50,8 @@ chrome.storage.onChanged.addListener((changes) => {
   if (changes.enableDebug) _debugEnabled = changes.enableDebug.newValue === true;
 });
 
-// ── Broadcast: tabId حتماً باید معتبر باشه ───────────────────────────────────
-// اگه tabId نامعتبره → drop. هرگز به تب اشتباه assign نکن.
+// ── Broadcast: tabId must be valid ─────────────────────────────────────────
+// Invalid tabId → drop. Never assign to the wrong tab.
 function broadcastBatch(batch, sourceTabId, timestamp, via) {
   if (!sourceTabId || sourceTabId < 0) {
     rsLog(`[RS BG] broadcastBatch: invalid tabId=${sourceTabId}, DROP (via ${via})`);
@@ -69,17 +69,17 @@ function broadcastBatch(batch, sourceTabId, timestamp, via) {
 }
 
 // ── webRequest fallback ───────────────────────────────────────────────────────
-// فقط وقتی interceptor.js نتونه capture کنه (مثلاً HTTPS compression)
-// برای جلوگیری از duplicate: اگه content script connected هست برای این تب،
-// به interceptor.js اعتماد می‌کنیم و webRequest رو skip می‌کنیم
+// Only used when interceptor.js cannot capture (e.g. HTTPS compression).
+// To avoid duplicates: if the content script is connected for this tab,
+// trust interceptor.js and skip webRequest.
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.method !== 'POST') return;
     if (!details.url.includes(cachedBatchPattern)) return;
     if (!details.tabId || details.tabId < 0) return;
 
-    // اگه content script برای این تب connected هست، interceptor.js handle می‌کنه
-    // webRequest رو skip کن تا duplicate نشه
+    // If the content script is connected for this tab, interceptor.js handles it.
+	// Skip webRequest to avoid duplicates.
     if (connections.has(details.tabId)) {
       rsLog(`[RS BG] webRequest: tab ${details.tabId} has content script, skipping (interceptor handles)`);
       return;
