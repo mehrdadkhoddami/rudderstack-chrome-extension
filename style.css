@@ -241,7 +241,7 @@ body::after {
   align-items: center;
   justify-content: center;
   background-image: url('images/all-cleared.png');
-  background-size: 55% auto;
+  background-size: 70% auto;
   background-position: center;
   background-repeat: no-repeat;
   opacity: 0;

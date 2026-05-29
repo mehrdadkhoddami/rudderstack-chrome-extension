@@ -172,7 +172,6 @@ body {
   border-radius: var(--radius);
   padding: 12px 14px;
   margin-bottom: 20px;
-  direction: rtl;
 }
 
 .info-box svg { fill: var(--brand); flex-shrink: 0; margin-top: 1px; }

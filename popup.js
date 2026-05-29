@@ -705,7 +705,7 @@ function createItemElement(key, data, isSent) {
 
   const toggleIcon = document.createElement('span');
   toggleIcon.className = 'toggle-icon collapsed';
-  toggleIcon.innerHTML = '<img src="expand_more-128.png" class="view-more" />';
+  toggleIcon.innerHTML = '<img src="images/expand_more-128.png" class="view-more" />';
 
   const valueContainer = document.createElement('div');
   valueContainer.className = 'value-container';
