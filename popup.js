@@ -727,6 +727,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
     currentTabId = tabId;
     //console.log(`[RS DEBUG] Init | currentTabId=${tabId}`);
+	
+	chrome.storage.local.get(null, (allStorage) => {
+	  chrome.tabs.query({}, (openTabs) => {
+		const openTabIds = new Set(openTabs.map(t => String(t.id)));
+		const keysToRemove = Object.keys(allStorage).filter(key => {
+		  const m = key.match(/^(?:allItems|sentIds)_(\d+)$/);
+		  return m && !openTabIds.has(m[1]);
+		});
+		if (keysToRemove.length > 0) chrome.storage.local.remove(keysToRemove);
+	  });
+	});
+	
     document.getElementById('clearButton').addEventListener('click', () => clearAllItems(currentTabId));
 
     // Initial load from persisted storage

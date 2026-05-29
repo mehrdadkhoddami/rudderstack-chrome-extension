@@ -16,6 +16,22 @@ function keepAlive() {
   }
 }
 
+function cleanOrphanedStorage() {
+  chrome.tabs.query({}, (openTabs) => {
+    const openTabIds = new Set(openTabs.map(t => String(t.id)));
+    chrome.storage.local.get(null, (allStorage) => {
+      const keysToRemove = Object.keys(allStorage).filter(key => {
+        const m = key.match(/^(?:allItems|sentIds)_(\d+)$/);
+        return m && !openTabIds.has(m[1]);
+      });
+      if (keysToRemove.length > 0) {
+        chrome.storage.local.remove(keysToRemove);
+        rsLog('[RS BG] Cleaned orphaned storage keys:', keysToRemove);
+      }
+    });
+  });
+}
+
 // ── Load settings ─────────────────────────────────────────────────────────────
 chrome.storage.local.get(['batchUrlPattern', 'enableDebug'], (result) => {
   cachedBatchPattern = result.batchUrlPattern || DEFAULT_BATCH_PATTERN;
@@ -126,11 +142,14 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 // ── Install / click ───────────────────────────────────────────────────────────
+chrome.runtime.onStartup.addListener(cleanOrphanedStorage);
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setOptions({ path: 'sidepanel.html', enabled: true });
   chrome.storage.local.get(['batchUrlPattern'], (result) => {
     if (!result.batchUrlPattern) chrome.storage.local.set({ batchUrlPattern: DEFAULT_BATCH_PATTERN });
   });
+  cleanOrphanedStorage();
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
