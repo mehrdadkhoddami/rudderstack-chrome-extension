@@ -38,17 +38,17 @@
         <svg width="16" height="16" viewBox="0 0 24 24">
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
         </svg>
-        <p>هر POST request که URL آن <strong>شامل</strong> این pattern باشد intercept می‌شود. می‌توانید فقط path را بنویسید تا روی همه دامنه‌ها کار کند، یا URL کامل برای یک سرور خاص.</p>
+        <p>Any POST request whose URL <strong>contains</strong> this pattern will be intercepted. Use a path-only value to match all domains, or a full URL for a specific server.</p>
       </div>
 
       <div class="field">
-        <label>URL Pattern <span class="label-hint">(substring match در همه POST requests)</span></label>
+        <label>URL Pattern <span class="label-hint">(substring match on all POST requests)</span></label>
         <input type="text" id="batchPattern"
                placeholder="/beacon/v1/batch"
                spellcheck="false" autocomplete="off">
         <p class="hint">
-          فقط path: <code>/beacon/v1/batch</code> — روی همه دامنه‌ها match می‌کند<br>
-          دامنه خاص: <code>ingest.example.com/beacon/v1/batch</code>
+          Path only: <code>/beacon/v1/batch</code> — matches all domains<br>
+          Specific domain: <code>ingest.example.com/beacon/v1/batch</code>
         </p>
       </div>
 
@@ -63,14 +63,61 @@
       </div>
     </div>
 
+    <!-- ── localStorage Key Patterns Card ── -->
+    <div class="card">
+      <div class="card-title">localStorage Key Patterns</div>
+
+      <div class="info-box">
+        <svg width="16" height="16" viewBox="0 0 24 24">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+        </svg>
+        <p>Define which localStorage keys the extension should read. Each rule is a <strong>startsWith</strong> prefix (required) and an optional <strong>endsWith</strong> suffix. Built-in rules can be toggled; custom rules can be added and removed freely.</p>
+      </div>
+
+      <p class="presets-label" style="margin-bottom:12px">Built-in rules</p>
+
+      <div class="toggle-field">
+        <div class="toggle-info">
+          <span class="toggle-label"><code class="rule-code">rudder_*</code> … <code class="rule-code">*.batchQueue</code></span>
+          <span class="toggle-desc">Keys starting with <code>rudder_</code> and ending with <code>.batchQueue</code> — default RudderStack SDK format</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="patternRudder" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <div class="toggle-field" style="border-bottom:none">
+        <div class="toggle-info">
+          <span class="toggle-label"><code class="rule-code">queue.*</code></span>
+          <span class="toggle-desc">Keys starting with <code>queue.</code> — used by snappfood and similar setups</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="patternQueue" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <div class="ls-divider"></div>
+
+      <p class="presets-label" style="margin-bottom:12px;margin-top:20px">Custom rules</p>
+
+      <div id="customPatternsList"></div>
+
+      <button class="btn-add-rule" id="addPatternBtn">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        Add rule
+      </button>
+    </div>
+
     <!-- ── Display Settings Card ── -->
     <div class="card">
       <div class="card-title">Display</div>
 
-      <div class="toggle-field">
+      <div class="toggle-field" style="border-bottom:none">
         <div class="toggle-info">
           <span class="toggle-label">Show JSON Viewer</span>
-          <span class="toggle-desc">نمایش بخش raw JSON و دکمه Copy در زیر جدول properties</span>
+          <span class="toggle-desc">Show the raw JSON section and Copy button below the properties table</span>
         </div>
         <label class="toggle-switch">
           <input type="checkbox" id="showJsonViewer" checked>
@@ -83,10 +130,10 @@
     <div class="card">
       <div class="card-title">Developer</div>
 
-      <div class="toggle-field">
+      <div class="toggle-field" style="border-bottom:none">
         <div class="toggle-info">
           <span class="toggle-label">Enable Debug Logging</span>
-          <span class="toggle-desc">فعال‌سازی console.log ها در background, content script و interceptor</span>
+          <span class="toggle-desc">Enable console.log output in background, content script, and interceptor</span>
         </div>
         <label class="toggle-switch">
           <input type="checkbox" id="enableDebug">
@@ -94,10 +141,11 @@
         </label>
       </div>
     </div>
+
     <div class="actions">
-        <button class="btn-secondary" id="resetBtn">Reset to default</button>
-        <button class="btn-primary"   id="saveBtn">Save settings</button>
-      </div>
+      <button class="btn-secondary" id="resetBtn">Reset to default</button>
+      <button class="btn-primary"   id="saveBtn">Save settings</button>
+    </div>
 
   </div>
 

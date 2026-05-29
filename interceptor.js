@@ -23,10 +23,23 @@
     function dispatchBatch(bodyText, sourceType) {
         try {
             const parsed = JSON.parse(bodyText);
+            let batch = null;
+
+            // Structure 1: standard RudderStack — { batch: [...] }
             if (parsed && Array.isArray(parsed.batch) && parsed.batch.length > 0) {
-                console.log(`[RS Interceptor] Captured batch via ${sourceType}: ${parsed.batch.length} events`);
+                batch = parsed.batch;
+            }
+            // Structure 2: direct array — [ {...event...}, ... ]
+            // Used by partner.snappfood.ir and similar setups that POST a bare array.
+            // Guard: first element must have messageId to avoid false positives.
+            else if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && parsed[0].messageId) {
+                batch = parsed;
+            }
+
+            if (batch) {
+                console.log(`[RS Interceptor] Captured batch via ${sourceType}: ${batch.length} events`);
                 window.dispatchEvent(new CustomEvent('__rs_batch_captured', {
-                    detail: { batch: parsed.batch, timestamp: Date.now(), sourceType }
+                    detail: { batch: batch, timestamp: Date.now(), sourceType }
                 }));
             }
         } catch (e) {
@@ -34,7 +47,7 @@
         }
     }
 
-    // substring match 
+    // substring match
     function matchesPattern(url) {
         return url && url.includes(PATTERN);
     }

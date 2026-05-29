@@ -419,3 +419,115 @@ button {
 .toggle-switch input:checked + .toggle-track .toggle-thumb {
   transform: translateX(18px);
 }
+
+/* ── localStorage pattern rules ── */
+.ls-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 20px 0 0;
+}
+
+.rule-code {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--brand);
+}
+
+.custom-rule-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.rule-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.rule-input-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--text-3);
+}
+
+.rule-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+  transition: var(--transition);
+}
+
+.rule-input::placeholder { color: var(--text-3); }
+
+.rule-input:focus {
+  border-color: var(--brand);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--brand-glow);
+}
+
+.btn-remove-rule {
+  flex-shrink: 0;
+  width: 32px;
+  height: 36px;
+  padding: 0;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+
+.btn-remove-rule svg { fill: currentColor; }
+
+.btn-remove-rule:hover {
+  background: rgba(239,68,68,.08);
+  color: #EF4444;
+  border-color: rgba(239,68,68,.25);
+}
+
+.btn-add-rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.btn-add-rule svg { fill: currentColor; }
+
+.btn-add-rule:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-muted);
+}

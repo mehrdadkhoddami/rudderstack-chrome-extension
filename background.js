@@ -95,9 +95,19 @@ chrome.webRequest.onBeforeRequest.addListener(
       if (!chunks.length) return;
 
       const parsed = JSON.parse(chunks.join(''));
-      if (!Array.isArray(parsed?.batch) || !parsed.batch.length) return;
 
-      broadcastBatch(parsed.batch, details.tabId, Date.now(), 'webRequest-fallback');
+      let batch = null;
+      // Structure 1: standard { batch: [...] }
+      if (Array.isArray(parsed?.batch) && parsed.batch.length) {
+        batch = parsed.batch;
+      }
+      // Structure 2: direct array [ {...event...} ] — partner.snappfood.ir style
+      else if (Array.isArray(parsed) && parsed.length && parsed[0]?.messageId) {
+        batch = parsed;
+      }
+
+      if (!batch) return;
+      broadcastBatch(batch, details.tabId, Date.now(), 'webRequest-fallback');
     } catch(e) {
       rsWarn('[RS BG] webRequest parse error:', e.message);
     }

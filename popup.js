@@ -208,6 +208,7 @@ function ingestBatchEvents(batchArray, timestamp, targetTabId) {
   const cache = getTabCache(targetTabId);
   let newCount = 0;
 
+  let sentChanged = false;
   batchArray.forEach((event) => {
     if (!event?.messageId) return;
     if (event.type !== 'track' && event.type !== 'page') return;
@@ -215,7 +216,10 @@ function ingestBatchEvents(batchArray, timestamp, targetTabId) {
     const msgId = event.messageId;
     const key   = cacheKey(targetTabId, msgId);
 
-    cache.sentIds.add(msgId);
+    if (!cache.sentIds.has(msgId)) {
+      cache.sentIds.add(msgId);
+      sentChanged = true;
+    }
 
     if (!cache.items.has(key)) {
       cache.items.set(key, {
@@ -230,11 +234,22 @@ function ingestBatchEvents(batchArray, timestamp, targetTabId) {
         msgId,
       });
       newCount++;
+    } else {
+      // Item already exists (came from localStorage) — upgrade it to batch source
+      // so the BATCH badge appears and the left-bar color updates correctly.
+      const existing = cache.items.get(key);
+      if (existing.source !== 'batch') {
+        existing.source = 'batch';
+        existing.parsedValue = event;
+        existing.value = JSON.stringify(event);
+        existing.propertiesKey = event.properties || existing.propertiesKey || null;
+        newCount++; // trigger re-render so DOM reflects the source change
+      }
     }
   });
 
-  //console.log(`[RS DEBUG] ingestBatch | tabId=${targetTabId} | +${newCount} new | total=${cache.items.size} | isActive=${targetTabId === currentTabId}`);
-  if (newCount > 0) saveState(targetTabId);
+  // Save if new items added OR if sentIds changed (badge persistence across reloads)
+  if (newCount > 0 || sentChanged) saveState(targetTabId);
 
   if (targetTabId === currentTabId) {
     //console.log(`[RS DEBUG] ingestBatch -> renderAll for active tab ${targetTabId}`);
@@ -331,6 +346,12 @@ function renderAll() {
           const bc = el.querySelector('.badges-container');
           if (bc && !bc.querySelector('.sent-badge')) bc.appendChild(createSentBadge());
         }
+        // Upgrade localStorage item to batch when source changed in cache
+        if (data.source === 'batch' && !el.classList.contains('batch-item')) {
+          el.classList.add('batch-item');
+          const bc = el.querySelector('.badges-container');
+          if (bc && !bc.querySelector('.batch-badge')) bc.appendChild(createBatchBadge());
+        }
       } else {
         const el = createItemElement(key, data, isSent);
         el.setAttribute('data-key', key);
@@ -414,44 +435,104 @@ function fetchAndIngestLocalStorage(tabId) {
     if (!tab?.url) return;
     if (['chrome://', 'chrome-extension://', 'about:'].some(p => tab.url.startsWith(p))) return;
 
-    chrome.scripting.executeScript({
-      target: { tabId },
-      func: function safeGetLocalStorage() {
-        try {
-          const items = {};
-          if (!localStorage) return items;
-          for (let i = 0; i < localStorage.length; i++) {
+    // Load key patterns from global settings, then inject + execute in page
+    chrome.storage.local.get(['patternRudder', 'patternQueue', 'customLsPatterns'], (pats) => {
+      const patternRudder = pats.patternRudder !== false;
+      const patternQueue  = pats.patternQueue  !== false;
+      const customRules   = Array.isArray(pats.customLsPatterns) ? pats.customLsPatterns : [];
+
+      // First inject pattern config as globals, then read localStorage
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: function setRsPatterns(r, q, rules) {
+          window.__rsPatternRudder = r;
+          window.__rsPatternQueue  = q;
+          window.__rsCustomRules   = rules;
+        },
+        args: [patternRudder, patternQueue, customRules],
+      }, () => {
+        if (chrome.runtime.lastError) return;
+
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func: function safeGetLocalStorage() {
             try {
-              const key = localStorage.key(i);
-              if (!key?.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
-              const value = localStorage.getItem(key);
-              if (!value) continue;
-              try {
-                const parsed = JSON.parse(JSON.parse(value));
-                for (const j in parsed) {
-                  const ev = parsed[j]?.item?.event;
-                  if (!ev || (ev.type !== 'track' && ev.type !== 'page') || !ev.messageId) continue;
-                  items[ev.messageId] = {
-                    value: JSON.stringify(ev),
-                    parsedValue: ev,
-                    originalKey: ev.event || ev.name || ev.messageId,
-                    propertiesKey: ev.properties || null,
-                    timestamp: Date.now(),
-                    source: 'localStorage',
-                  };
+              const items = {};
+              if (!localStorage) return items;
+
+              const useRudder = window.__rsPatternRudder !== false;
+              const useQueue  = window.__rsPatternQueue  !== false;
+              const rules     = Array.isArray(window.__rsCustomRules) ? window.__rsCustomRules : [];
+
+              function keyMatches(key) {
+                if (useRudder && key.startsWith('rudder_') && key.endsWith('.batchQueue')) return true;
+                if (useQueue  && key.startsWith('queue.')) return true;
+                for (const rule of rules) {
+                  if (!rule.prefix) continue;
+                  if (key.startsWith(rule.prefix) && (!rule.suffix || key.endsWith(rule.suffix))) return true;
                 }
-              } catch(e) {}
-            } catch(e) { continue; }
+                return false;
+              }
+
+              function addEvent(ev) {
+                if (!ev || typeof ev !== 'object' || !ev.messageId) return;
+                if (ev.type !== 'track' && ev.type !== 'page') return;
+                items[ev.messageId] = {
+                  value:         JSON.stringify(ev),
+                  parsedValue:   ev,
+                  originalKey:   ev.event || ev.name || ev.messageId,
+                  propertiesKey: ev.properties || null,
+                  timestamp:     Date.now(),
+                  source:        'localStorage',
+                  msgId:         ev.messageId,
+                };
+              }
+
+              function parseValue(raw) {
+                try {
+                  let parsed = JSON.parse(raw);
+                  if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+
+                  // Unwrap a single element: handles SDK v3 wrapper, thin wrapper, direct event
+                  // el.event can be a STRING (event name) in direct events — check typeof first
+                  function unwrap(el) {
+                    if (!el || typeof el !== 'object') return null;
+                    if (el.item?.event && typeof el.item.event === 'object') return el.item.event;
+                    if (el.event       && typeof el.event       === 'object') return el.event;
+                    if (el.messageId) return el;
+                    return null;
+                  }
+
+                  if (Array.isArray(parsed)) {
+                    parsed.forEach(el => addEvent(unwrap(el)));
+                  } else if (typeof parsed === 'object' && parsed !== null) {
+                    for (const j in parsed) {
+                      addEvent(unwrap(parsed[j]));
+                    }
+                  }
+                } catch(e) {}
+              }
+
+              for (let i = 0; i < localStorage.length; i++) {
+                try {
+                  const key = localStorage.key(i);
+                  if (!key || !keyMatches(key)) continue;
+                  const raw = localStorage.getItem(key);
+                  if (!raw) continue;
+                  parseValue(raw);
+                } catch(e) { continue; }
+              }
+              return items;
+            } catch(e) { return {}; }
+          },
+        }, (results) => {
+          if (chrome.runtime.lastError) return;
+          const data = results?.[0]?.result;
+          if (data && Object.keys(data).length > 0) {
+            ingestLocalStorageItems(data, tabId);
           }
-          return items;
-        } catch(e) { return {}; }
-      },
-    }, (results) => {
-      if (chrome.runtime.lastError) return;
-      const data = results?.[0]?.result;
-      if (data && Object.keys(data).length > 0) {
-        ingestLocalStorageItems(data, tabId);
-      }
+        });
+      });
     });
   });
 }
@@ -727,18 +808,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     currentTabId = tabId;
     //console.log(`[RS DEBUG] Init | currentTabId=${tabId}`);
-	
-	chrome.storage.local.get(null, (allStorage) => {
-	  chrome.tabs.query({}, (openTabs) => {
-		const openTabIds = new Set(openTabs.map(t => String(t.id)));
-		const keysToRemove = Object.keys(allStorage).filter(key => {
-		  const m = key.match(/^(?:allItems|sentIds)_(\d+)$/);
-		  return m && !openTabIds.has(m[1]);
-		});
-		if (keysToRemove.length > 0) chrome.storage.local.remove(keysToRemove);
-	  });
-	});
-	
     document.getElementById('clearButton').addEventListener('click', () => clearAllItems(currentTabId));
 
     // Initial load from persisted storage

@@ -26,6 +26,105 @@
     if (changes.enableDebug) _debugEnabled = changes.enableDebug.newValue === true;
   });
 
+  // ── localStorage key pattern cache (global settings) ──────────────────────
+  let _lsPatterns = {
+    patternRudder: true,
+    patternQueue:  true,
+    customRules:   [],
+  };
+
+  function loadLsPatterns(cb) {
+    chrome.storage.local.get(['patternRudder', 'patternQueue', 'customLsPatterns'], (res) => {
+      _lsPatterns = {
+        patternRudder: res.patternRudder !== false,
+        patternQueue:  res.patternQueue  !== false,
+        customRules:   Array.isArray(res.customLsPatterns) ? res.customLsPatterns : [],
+      };
+      if (cb) cb();
+    });
+  }
+
+  loadLsPatterns();
+
+  chrome.storage.onChanged.addListener((changes) => {
+    let lsPatternChanged = false;
+    if (changes.patternRudder)    { _lsPatterns.patternRudder = changes.patternRudder.newValue !== false;  lsPatternChanged = true; }
+    if (changes.patternQueue)     { _lsPatterns.patternQueue  = changes.patternQueue.newValue  !== false;  lsPatternChanged = true; }
+    if (changes.customLsPatterns) { _lsPatterns.customRules   = Array.isArray(changes.customLsPatterns.newValue) ? changes.customLsPatterns.newValue : []; lsPatternChanged = true; }
+    // Push updated patterns into page context so storage-monitor.js stays in sync
+    if (lsPatternChanged) pushLsPatternsToPage();
+  });
+
+  // ── Key matching ───────────────────────────────────────────────────────────
+  function keyMatchesPatterns(key) {
+    if (_lsPatterns.patternRudder && key.startsWith('rudder_') && key.endsWith('.batchQueue')) return true;
+    if (_lsPatterns.patternQueue  && key.startsWith('queue.')) return true;
+    for (const rule of _lsPatterns.customRules) {
+      if (!rule.prefix) continue;
+      if (key.startsWith(rule.prefix)) {
+        if (!rule.suffix || key.endsWith(rule.suffix)) return true;
+      }
+    }
+    return false;
+  }
+
+  // ── Unwrap a single localStorage array/object element into a raw event ───────
+  // Handles three shapes without false-positives on el.event being a string:
+  //   { item: { event: {...} } }        SDK v3 batchQueue wrapper
+  //   { event: {...} }                  thin object wrapper
+  //   { messageId, type, event: "name"} direct event (event field is a string)
+  function unwrapStorageElement(el) {
+    if (!el || typeof el !== 'object') return null;
+    if (el.item?.event && typeof el.item.event === 'object') return el.item.event;
+    if (el.event       && typeof el.event       === 'object') return el.event;
+    if (el.messageId) return el; // direct event object
+    return null;
+  }
+
+  // ── Parse a single localStorage value into event items ────────────────────
+  function parseStorageValue(rawValue, outItems) {
+    try {
+      let parsed = JSON.parse(rawValue);
+
+      // Structure 1: double-encoded string (standard RudderStack SDK)
+      if (typeof parsed === 'string') {
+        parsed = JSON.parse(parsed);
+      }
+
+      // Structure 2: array — each element may be:
+      //   a) direct event object  { messageId, type, event: "name", ... }  ← queue.* / partner.*
+      //   b) SDK v3 wrapper       { item: { event: {...} }, attemptNumber } ← rudder_beacon_*
+      //   c) thin event wrapper   { event: { messageId, ... } }
+      // NOTE: in case (a) el.event is a STRING (the event name), not an object —
+      //       so we must check typeof before using el.event as the event object.
+      if (Array.isArray(parsed)) {
+        parsed.forEach(el => addEventToItems(unwrapStorageElement(el), outItems));
+        return;
+      }
+
+      // Structure 3: numeric-indexed object { 0: { item: { event: {...} } }, ... }
+      if (typeof parsed === 'object' && parsed !== null) {
+        for (const j in parsed) {
+          addEventToItems(unwrapStorageElement(parsed[j]), outItems);
+        }
+      }
+    } catch (e) {}
+  }
+
+  function addEventToItems(ev, outItems) {
+    if (!ev || typeof ev !== 'object' || !ev.messageId) return;
+    if (ev.type !== 'track' && ev.type !== 'page') return;
+    outItems[ev.messageId] = {
+      value:        JSON.stringify(ev),
+      parsedValue:  ev,
+      originalKey:  ev.event || ev.name || ev.messageId,
+      propertiesKey: ev.properties || null,
+      timestamp:    Date.now(),
+      source:       'localStorage',
+      msgId:        ev.messageId,
+    };
+  }
+
   // ── Pending batch queue (captured before port is ready) ────────────────────
   const pendingBatches = [];
 
@@ -86,7 +185,6 @@
           handleConnectionError();
         }
       } else {
-        // Port not ready yet — queue and send once connected
         rsLog('[RS Content] Port not ready, queuing batch');
         pendingBatches.push({ batch, timestamp });
       }
@@ -103,29 +201,10 @@
       for (let i = 0; i < localStorage.length; i++) {
         try {
           const key = localStorage.key(i);
-          if (!key || !key.startsWith('rudder_') || !key.endsWith('.batchQueue')) continue;
+          if (!key || !keyMatchesPatterns(key)) continue;
           const value = localStorage.getItem(key);
           if (!value) continue;
-          try {
-            const parsedL1 = JSON.parse(value);
-            const parsedJson = JSON.parse(parsedL1);
-            for (var j in parsedJson) {
-              if (!parsedJson[j].item || !parsedJson[j].item.event) continue;
-              const currentItem = parsedJson[j].item.event;
-              if (currentItem.type === 'track' || currentItem.type === 'page') {
-                const currentKey = currentItem.messageId;
-                if (!currentKey) continue;
-                items[currentKey] = {
-                  value: JSON.stringify(currentItem),
-                  parsedValue: currentItem,
-                  originalKey: currentItem.event || currentItem.name || currentKey,
-                  propertiesKey: currentItem.properties || null,
-                  timestamp: Date.now(),
-                  source: 'localStorage'
-                };
-              }
-            }
-          } catch (parseError) {}
+          parseStorageValue(value, items);
         } catch (itemError) { continue; }
       }
       return items;
@@ -149,6 +228,23 @@
     return true;
   });
 
+  // ── Push current ls patterns into page context (for storage-monitor.js) ──────
+  // storage-monitor.js runs in page context and has no chrome.storage access,
+  // so contentScript pushes the patterns via a CustomEvent whenever they change.
+  function pushLsPatternsToPage() {
+    try {
+      window.dispatchEvent(new CustomEvent('__rs_update_ls_patterns', {
+        detail: {
+          patternRudder: _lsPatterns.patternRudder,
+          patternQueue:  _lsPatterns.patternQueue,
+          customRules:   _lsPatterns.customRules,
+        }
+      }));
+    } catch (e) {
+      rsWarn('[RS Content] Failed to push ls patterns to page:', e);
+    }
+  }
+
   function setupMonitoring(pattern) {
     try {
       if (!isExtensionActive || !chrome.runtime) { cleanup(); return; }
@@ -158,11 +254,16 @@
 
       const storageScript = document.createElement('script');
       storageScript.src = chrome.runtime.getURL('storage-monitor.js');
-      storageScript.onload = () => { storageScript.remove(); checkAndNotifyChanges(); };
+      storageScript.onload = () => {
+        storageScript.remove();
+        // Push current patterns immediately after storage-monitor.js is ready
+        pushLsPatternsToPage();
+        checkAndNotifyChanges();
+      };
       (document.head || document.documentElement).appendChild(storageScript);
 
       window.addEventListener('storage', (e) => {
-        if (e.key && e.key.startsWith('rudder')) checkAndNotifyChanges();
+        if (e.key && keyMatchesPatterns(e.key)) checkAndNotifyChanges();
       });
       window.addEventListener('rudderstack_storage_changed', checkAndNotifyChanges);
 
@@ -209,7 +310,6 @@
       chrome.storage.local.get(['batchUrlPattern'], (result) => {
         const pattern = result.batchUrlPattern || '/beacon/v1/batch';
         setupMonitoring(pattern);
-        // Flush any batches that arrived before port was ready
         flushPendingBatches();
       });
 
