@@ -171,6 +171,20 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+// ── Tab closed — own the persisted-storage cleanup ────────────────────────────
+// The service worker is a single instance and sees every window, unlike the
+// side panel which exists once per window. Cleaning here avoids N panels racing
+// on the same keys and covers windows that never had a panel open.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  connections.delete(tabId);
+  chrome.storage.local.remove([
+    `allItems_${tabId}`,
+    `sentIds_${tabId}`,
+    `pinned_${tabId}`,
+  ]);
+  rsLog('[RS BG] Tab removed, cleaned storage for tabId:', tabId);
+});
+
 // ── Install / click ───────────────────────────────────────────────────────────
 chrome.runtime.onStartup.addListener(cleanOrphanedStorage);
 

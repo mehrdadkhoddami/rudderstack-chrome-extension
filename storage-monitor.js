@@ -49,7 +49,8 @@
             return;
         }
 
-        // Safe notification function
+        // Throttled, payload-free ping — used for removals, where there is
+        // nothing to attribute.
         function safeNotify() {
             const now = Date.now();
             if (now - lastNotification > NOTIFICATION_DELAY) {
@@ -62,12 +63,31 @@
             }
         }
 
+        // Writes carry their payload so contentScript.js can record exactly which
+        // events THIS document produced.
+        //
+        // localStorage is shared by every tab and window on the origin, so a plain
+        // re-read cannot tell "we wrote this" from "another window wrote this and
+        // we can now see it". Only the patched setItem of the document that made
+        // the call runs, which makes this the one reliable ownership signal.
+        // Never throttled — dropping a write would lose the event permanently.
+        function notifyWrite(key, value) {
+            try {
+                lastNotification = Date.now();
+                window.dispatchEvent(new CustomEvent('rudderstack_storage_changed', {
+                    detail: { key: key, value: value }
+                }));
+            } catch (e) {
+                console.warn('Failed to dispatch storage write event');
+            }
+        }
+
         // Safe method override
         function safeOverride() {
             try {
                 localStorage.setItem = function(key, value) {
                     originalMethods.setItem.call(localStorage, key, value);
-                    if (isTrackedKey(key)) safeNotify();
+                    if (isTrackedKey(key)) notifyWrite(key, value);
                 };
 
                 localStorage.removeItem = function(key) {
@@ -84,12 +104,10 @@
             }
         }
 
-        // Initialize monitoring
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', safeOverride);
-        } else {
-            safeOverride();
-        }
+        // Patch immediately. Waiting for DOMContentLoaded left a long window in
+        // which SDK writes happened through the unpatched setItem and were never
+        // attributed to this document.
+        safeOverride();
 
     } catch (e) {
         console.warn('Failed to initialize storage monitor');

@@ -241,16 +241,80 @@
     } catch (e) { return {}; }
   }
 
+  // ── Event ownership ────────────────────────────────────────────────────────
+  // localStorage is shared by every tab and window on the origin. A second
+  // window loading the same site drops its events into the SAME storage, so a
+  // plain re-read makes them look like this document's events and they show up
+  // in the wrong panel.
+  //
+  // Ownership is therefore tracked explicitly: an event belongs to this document
+  // only if this document's patched setItem wrote it (see storage-monitor.js),
+  // or if it was already queued when monitoring started.
+  const _ownedMsgIds = new Set();
+
+  // The claim list is mirrored into sessionStorage, which — unlike localStorage —
+  // is scoped to a single tab and is NOT shared with other tabs or windows.
+  // That gives ownership two useful properties:
+  //   • reloading a tab recovers that tab's own still-queued events
+  //   • a freshly opened window starts empty, so it never adopts a queue that
+  //     another window left behind
+  const OWNED_KEY = '__rs_owned_msg_ids';
+  const OWNED_MAX = 500;
+
+  function loadOwnedIds() {
+    try {
+      const raw = sessionStorage.getItem(OWNED_KEY);
+      if (!raw) return;
+      const ids = JSON.parse(raw);
+      if (Array.isArray(ids)) ids.forEach(id => _ownedMsgIds.add(id));
+      rsLog(`[RS Content] Restored ${_ownedMsgIds.size} owned id(s) for this tab`);
+    } catch (e) { /* sessionStorage unavailable — stay memory-only */ }
+  }
+
+  function persistOwnedIds() {
+    try {
+      const ids = [..._ownedMsgIds].slice(-OWNED_MAX);
+      if (ids.length !== _ownedMsgIds.size) {
+        _ownedMsgIds.clear();
+        ids.forEach(id => _ownedMsgIds.add(id));
+      }
+      sessionStorage.setItem(OWNED_KEY, JSON.stringify(ids));
+    } catch (e) { /* quota or unavailable — memory-only is fine */ }
+  }
+
+  loadOwnedIds();
+
+  // Only events this tab is known to have written are ever reported. Anything
+  // else sitting in the shared localStorage belongs to another tab or window.
+  function collectOwnedItems() {
+    const all = safeGetLocalStorage();
+    const owned = {};
+    Object.keys(all).forEach(id => { if (_ownedMsgIds.has(id)) owned[id] = all[id]; });
+    return owned;
+  }
+
   function checkAndNotifyChanges() {
     try {
       if (!isExtensionActive || !chrome.runtime) { cleanup(); return; }
-      const items = safeGetLocalStorage();
-      if (port && Object.keys(items).length > 0) {
-        try {
-          port.postMessage({ type: 'storageChanged', data: items });
-        } catch (e) { handleConnectionError(); }
+      const items = collectOwnedItems();
+      if (Object.keys(items).length > 0) {
+        postOrQueue({ type: 'storageChanged', data: items });
       }
     } catch (e) { rsWarn('[RS Content] Error in checkAndNotifyChanges:', e); }
+  }
+
+  // A write made by THIS document — parse just the written value and claim it.
+  function handleOwnWrite(rawValue) {
+    const items = {};
+    parseStorageValue(rawValue, items);
+    const ids = Object.keys(items);
+    if (!ids.length) return false;
+
+    ids.forEach(id => _ownedMsgIds.add(id));
+    persistOwnedIds();
+    rsLog(`[RS Content] Own write: claimed ${ids.length} event(s)`);
+    postOrQueue({ type: 'storageChanged', data: items });
+    return true;
   }
 
   // Push the initial debug flag as soon as the page context is available, in
@@ -258,7 +322,21 @@
   pushDebugToPage();
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'clearAll') sendResponse({ success: true });
+    if (message.type === 'clearAll') {
+      sendResponse({ success: true });
+      return true;
+    }
+    // The panel asks the content script rather than scanning localStorage
+    // itself, because only the content script knows which events this document
+    // actually owns.
+    if (message.type === 'getItems') {
+      try {
+        sendResponse({ items: collectOwnedItems() });
+      } catch (e) {
+        sendResponse({ items: {} });
+      }
+      return true;
+    }
     return true;
   });
 
@@ -296,10 +374,19 @@
       };
       (document.head || document.documentElement).appendChild(storageScript);
 
-      window.addEventListener('storage', (e) => {
-        if (e.key && keyMatchesPatterns(e.key)) checkAndNotifyChanges();
+      // NOTE: the cross-document `storage` event is deliberately NOT listened
+      // to. By spec it fires only in documents OTHER than the one that wrote,
+      // so it exclusively delivers another tab's or window's writes — exactly
+      // what must not be attributed to this document.
+
+      window.addEventListener('rudderstack_storage_changed', (e) => {
+        // A write from this document arrives with its payload attached; claim it
+        // directly. Anything else (removals, clears) falls back to a re-read,
+        // which is filtered to already-owned events.
+        const detail = e && e.detail;
+        if (detail && typeof detail.value === 'string' && handleOwnWrite(detail.value)) return;
+        checkAndNotifyChanges();
       });
-      window.addEventListener('rudderstack_storage_changed', checkAndNotifyChanges);
 
       monitoringInterval = setInterval(checkAndNotifyChanges, 1000);
     } catch (e) {

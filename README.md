@@ -40,11 +40,16 @@ A Chrome extension for monitoring, capturing, and displaying **RudderStack analy
 - **Failed** chip isolates events whose batch did not deliver successfully
 - **Pin** any event to keep it at the top of the list; pins persist per tab across panel reopens
 
-### Tab Isolation
+### Tab & Window Isolation
 - Each browser tab maintains its own independent event cache
 - localStorage events are only ingested for the **currently active tab** to prevent same-origin bleed across tabs
+- **Event ownership.** localStorage is shared by every tab and window on an origin, so re-reading it cannot tell "this page wrote it" from "another window wrote it and we can now see it". The extension therefore claims an event only when *this document's* patched `setItem` wrote it. The claim list is mirrored into `sessionStorage`, which is scoped to a single tab — so a tab reload recovers its own still-queued events, while a newly opened window starts empty and never adopts another window's backlog
+- The cross-document `storage` event is deliberately not used: by spec it fires only in documents *other* than the writer, so it delivers exactly the events that must not be attributed locally
+- The panel asks the content script for events rather than scanning localStorage itself, since only the content script knows what the document owns
 - Network batch events are always attributed to the correct tab via a verified `tabId`
-- Tab cache is wiped and persisted storage is cleaned up when a tab is closed
+- Chrome creates **one side panel document per browser window**, but `chrome.tabs` events and `chrome.runtime` broadcasts are global. Each panel records its own `windowId` at startup and ignores tab activity and events belonging to any other window — so the same site open in two separate windows stays separated
+- A tab dragged between windows is handed over via `onAttached` / `onDetached`; the panel that lost it re-points at its own active tab
+- Persisted storage is cleaned up by the service worker on tab close — it is a single instance and sees every window, unlike the panels
 
 ### Persistence
 - Per-tab event list, sent-ID set, and pinned-ID set are saved to `chrome.storage.local` (keyed by `tabId`) and restored when the panel is reopened
@@ -161,7 +166,7 @@ chrome.webRequest (fallback) ──────────►│  • connectio
 ## Known Limitations
 
 - **Popup only updates while open.** The side panel is the recommended UI — it stays alive across navigations. The popup misses events that arrive while it is closed.
-- **Same-origin localStorage.** localStorage is shared across all tabs of the same origin. The extension guards against cross-tab bleed by only reading localStorage for the active tab, but events already in storage before a second tab opened may appear in both.
+- **Events queued before the extension was watching.** Ownership is established by the patched `setItem`, which is installed at `document_start`. Events written to localStorage before that — for instance if the extension is installed or reloaded while a page is already open — are not claimed by any tab and will not be listed until the SDK rewrites the queue. Reloading the page fixes it.
 - **`FormData` bodies.** `sendBeacon` and `fetch` calls that send `FormData` cannot be read by the interceptor.
 - **No HTTP status on the fallback path.** Events captured through the `webRequest` fallback (tabs where the content script never connected) carry no delivery status, since that path only sees the request, not the response.
 - **`sendBeacon` reports no status code.** The browser exposes only whether the payload was accepted for delivery, not the server's response.

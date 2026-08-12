@@ -725,6 +725,33 @@ function fetchAndIngestLocalStorage(tabId) {
     if (!tab?.url) return;
     if (['chrome://', 'chrome-extension://', 'about:'].some(p => tab.url.startsWith(p))) return;
 
+    // Ask the content script first. It tracks which events THIS document wrote,
+    // so events queued by another window on the same origin are excluded.
+    // A raw scan of localStorage cannot make that distinction.
+    chrome.tabs.sendMessage(tabId, { type: 'getItems' }, (resp) => {
+      if (chrome.runtime.lastError || !resp || !resp.items) {
+        // No content script in this tab (injected before install, restricted
+        // page, …) — fall back to scanning, accepting that a shared-origin
+        // queue may bleed in.
+        rsLog('[RS Panel] getItems unavailable, falling back to direct scan');
+        scanLocalStorageDirect(tabId);
+        return;
+      }
+      if (Object.keys(resp.items).length > 0) {
+        ingestLocalStorageItems(resp.items, tabId);
+      }
+    });
+  });
+}
+
+// Fallback path: read the tab's localStorage directly via scripting injection.
+// Used only when the content script is not answering.
+function scanLocalStorageDirect(tabId) {
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError) return;
+    if (!tab?.url) return;
+    if (['chrome://', 'chrome-extension://', 'about:'].some(p => tab.url.startsWith(p))) return;
+
     // Load key patterns from global settings, then inject + execute in page
     chrome.storage.local.get(['patternRudder', 'patternQueue', 'customLsPatterns'], (pats) => {
       const patternRudder = pats.patternRudder !== false;
@@ -1140,8 +1167,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!tabId) { rsWarn('[RS Panel] No valid tab ID'); return; }
 
     currentTabId = tabId;
-    //console.log(`[RS DEBUG] Init | currentTabId=${tabId}`);
+    //console.log(`[RS DEBUG] Init | currentTabId=${tabId} | windowId=${myWindowId}`);
     document.getElementById('clearButton').addEventListener('click', () => clearAllItems(currentTabId));
+
+    // Cache this window's tabs up front so early events skip the async lookup
+    primeWindowTabs();
 
     // Initial load from persisted storage
     loadState(tabId, () => {
@@ -1166,8 +1196,13 @@ document.addEventListener('DOMContentLoaded', function() {
         return true;
       }
 
+      // Broadcasts reach the panel in EVERY browser window. Only the panel that
+      // owns this tab's window may ingest it, otherwise the same events land in
+      // two panels and both write the same tab's storage.
       if (message.type === 'batchResult') {
-        applyBatchResult(msgTabId, message.requestId, message.status, message.ok, message.error);
+        ifOwnWindow(msgTabId, () => {
+          applyBatchResult(msgTabId, message.requestId, message.status, message.ok, message.error);
+        });
         if (sendResponse) sendResponse({ received: true });
         return true;
       }
@@ -1175,13 +1210,17 @@ document.addEventListener('DOMContentLoaded', function() {
       //console.log(`[RS DEBUG] updatePopup | src=${message.source} | msgTabId=${msgTabId} | currentTabId=${currentTabId} | isActive=${msgTabId === currentTabId}`);
 
       if (message.source === 'network' && Array.isArray(message.data)) {
-        // Network (batch) events are always ingested regardless of which tab is active —
-        // they carry a verified tabId from background.js and must not be dropped.
-        ingestBatchEvents(message.data, message.timestamp, msgTabId, message.requestId);
+        // Network (batch) events are ingested for background tabs too — but only
+        // background tabs of THIS window, so the data is ready on tab switch.
+        ifOwnWindow(msgTabId, () => {
+          ingestBatchEvents(message.data, message.timestamp, msgTabId, message.requestId);
+        });
       } else if (message.source === 'localStorage' && message.data) {
         // localStorage events are only accepted for the active tab (guard is inside
         // ingestLocalStorageItems) to prevent same-origin bleed.
-        ingestLocalStorageItems(message.data, msgTabId);
+        ifOwnWindow(msgTabId, () => {
+          ingestLocalStorageItems(message.data, msgTabId);
+        });
       }
 
       if (sendResponse) sendResponse({ received: true });
@@ -1189,10 +1228,27 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // ── Tab switch ────────────────────────────────────────────────────────
-    chrome.tabs.onActivated.addListener(({ tabId: newTabId }) => {
+    // onActivated fires for EVERY window. The event carries its own windowId,
+    // so this check needs no lookup — without it, switching tabs in another
+    // browser window would drag this panel onto that window's tab.
+    chrome.tabs.onActivated.addListener(({ tabId: newTabId, windowId }) => {
+      if (windowId !== myWindowId) return;
+      tabWindowMap.set(newTabId, windowId);
       if (!newTabId || newTabId === currentTabId) return;
       //console.log(`[RS DEBUG] onActivated | newTabId=${newTabId} | prevTabId=${currentTabId}`);
       switchToTab(newTabId);
+    });
+
+    // ── Tab dragged between windows ───────────────────────────────────────
+    chrome.tabs.onAttached.addListener((tabId, { newWindowId }) => {
+      tabWindowMap.set(tabId, newWindowId);
+      // A tab that just left this window must not stay on screen here
+      if (newWindowId !== myWindowId && tabId === currentTabId) resyncActiveTab();
+    });
+
+    chrome.tabs.onDetached.addListener((tabId, { oldWindowId }) => {
+      tabWindowMap.delete(tabId);
+      if (oldWindowId === myWindowId && tabId === currentTabId) resyncActiveTab();
     });
 
     // ── Tab reload / navigate ─────────────────────────────────────────────
@@ -1205,15 +1261,15 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     });
 
-    // ── Tab closed — wipe memory and persisted storage ────────────────────
+    // ── Tab closed — drop this panel's in-memory copy ─────────────────────
+    // Persisted storage is cleaned by background.js, which is a single instance
+    // and sees every window. Doing it here would mean N panels racing to delete
+    // the same keys, and tabs in window-less-panel windows never being cleaned.
     chrome.tabs.onRemoved.addListener((removedTabId) => {
       //.log(`[RS DEBUG] onRemoved | tabId=${removedTabId}`);
+      tabWindowMap.delete(removedTabId);
       tabCache.delete(removedTabId);
-      chrome.storage.local.remove([
-        `allItems_${removedTabId}`,
-        `sentIds_${removedTabId}`,
-        `pinned_${removedTabId}`,
-      ]);
+      if (removedTabId === currentTabId) resyncActiveTab();
     });
   });
 });
