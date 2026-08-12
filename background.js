@@ -21,7 +21,7 @@ function cleanOrphanedStorage() {
     const openTabIds = new Set(openTabs.map(t => String(t.id)));
     chrome.storage.local.get(null, (allStorage) => {
       const keysToRemove = Object.keys(allStorage).filter(key => {
-        const m = key.match(/^(?:allItems|sentIds)_(\d+)$/);
+        const m = key.match(/^(?:allItems|sentIds|pinned)_(\d+)$/);
         return m && !openTabIds.has(m[1]);
       });
       if (keysToRemove.length > 0) {
@@ -52,7 +52,7 @@ chrome.storage.onChanged.addListener((changes) => {
 
 // ── Broadcast: tabId must be valid ─────────────────────────────────────────
 // Invalid tabId → drop. Never assign to the wrong tab.
-function broadcastBatch(batch, sourceTabId, timestamp, via) {
+function broadcastBatch(batch, sourceTabId, timestamp, via, requestId) {
   if (!sourceTabId || sourceTabId < 0) {
     rsLog(`[RS BG] broadcastBatch: invalid tabId=${sourceTabId}, DROP (via ${via})`);
     return;
@@ -65,6 +65,23 @@ function broadcastBatch(batch, sourceTabId, timestamp, via) {
     tabId: sourceTabId,
     timestamp: timestamp || Date.now(),
     source: 'network',
+    requestId: requestId || null,
+  }).catch(() => {});
+}
+
+// Relays the HTTP outcome of a previously broadcast batch so the panel can
+// mark those events as delivered or failed.
+function broadcastResult(sourceTabId, requestId, status, ok, error) {
+  if (!sourceTabId || sourceTabId < 0 || !requestId) return;
+  rsLog(`[RS BG] broadcastResult tabId=${sourceTabId} ${requestId} status=${status} ok=${ok}`);
+
+  chrome.runtime.sendMessage({
+    type: 'batchResult',
+    tabId: sourceTabId,
+    requestId,
+    status,
+    ok,
+    error: error || null,
   }).catch(() => {});
 }
 
@@ -141,7 +158,10 @@ chrome.runtime.onConnect.addListener((port) => {
       if (!Array.isArray(message.data) || !message.data.length) return;
       rsLog(`[RS BG] batchCaptured tabId=${tabId}: ${message.data.length} events`);
       // tabId از port میاد — همیشه معتبره
-      broadcastBatch(message.data, tabId, message.timestamp, 'interceptor.js');
+      broadcastBatch(message.data, tabId, message.timestamp, 'interceptor.js', message.requestId);
+
+    } else if (message.type === 'batchResult') {
+      broadcastResult(tabId, message.requestId, message.status, message.ok, message.error);
     }
   });
 

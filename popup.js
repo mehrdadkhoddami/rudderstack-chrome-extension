@@ -1,11 +1,4 @@
 // popup.js
-(function(){
-  if (window.__perfHelpersInjected) return;
-  window.__perfHelpersInjected = true;
-  window._throttle = function(fn, wait){ var last=0; return function(){ var now=Date.now(); if(now-last>wait){ last=now; fn.apply(this, arguments);} }; };
-  window._debounce = function(fn, wait){ var t; return function(){ var ctx=this, args=arguments; clearTimeout(t); t=setTimeout(function(){ fn.apply(ctx,args); }, wait); }; };
-})();
-
 /*!
  * RudderStack Tracker Chrome Extension
  * Developed by: Mehrdad Khoddami
@@ -23,12 +16,26 @@
 //     This prevents shared-origin localStorage from bleeding events across tabs.
 // ═══════════════════════════════════════════════════════════════
 
+// ── Event types the tracker ingests ───────────────────────────────────────────
+// Kept in sync with TRACKED_EVENT_TYPES in contentScript.js and the inline copy
+// inside fetchAndIngestLocalStorage() below.
+const TRACKED_EVENT_TYPES = ['track', 'page', 'screen', 'identify', 'group', 'alias'];
+const TRACKED_TYPE_SET = new Set(TRACKED_EVENT_TYPES);
+
 // ── Per-tab in-memory cache ───────────────────────────────────────────────────
 const tabCache = new Map();
 
 function getTabCache(tabId) {
   if (!tabCache.has(tabId)) {
-    tabCache.set(tabId, { items: new Map(), sentIds: new Set(), loaded: false });
+    tabCache.set(tabId, {
+      items:    new Map(),
+      sentIds:  new Set(),
+      pinnedIds: new Set(),
+      // requestId → [cacheKey] so an HTTP result can be attributed back to the
+      // events that were in that request's body.
+      reqMap:   new Map(),
+      loaded:   false,
+    });
   }
   return tabCache.get(tabId);
 }
@@ -42,6 +49,58 @@ function cacheKey(tabId, msgId) {
 
 // ── Active tab pointer ────────────────────────────────────────────────────────
 let currentTabId = null;
+
+// ── Window isolation ──────────────────────────────────────────────────────────
+// Chrome creates ONE side panel document per browser window, but chrome.tabs
+// events and chrome.runtime.sendMessage broadcasts are global. Without this
+// guard, the panel in window A reacts to tab activity in window B and shows
+// its events. Every tab event and every ingest is scoped to myWindowId.
+let myWindowId = null;
+
+// tabId → windowId, so the hot ingest path avoids an async chrome.tabs.get
+// for tabs it has already seen.
+const tabWindowMap = new Map();
+
+// Runs `fn` only if the tab belongs to this panel's window.
+function ifOwnWindow(tabId, fn) {
+  if (!tabId || tabId < 0 || myWindowId === null) return;
+
+  const known = tabWindowMap.get(tabId);
+  if (known !== undefined) {
+    if (known === myWindowId) fn();
+    return;
+  }
+
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) return;
+    tabWindowMap.set(tabId, tab.windowId);
+    if (tab.windowId === myWindowId) fn();
+  });
+}
+
+// Caches every tab currently in this window so the first events don't each
+// pay for a lookup.
+function primeWindowTabs(callback) {
+  if (myWindowId === null) { if (callback) callback(); return; }
+  chrome.tabs.query({ windowId: myWindowId }, (tabs) => {
+    if (!chrome.runtime.lastError && tabs) {
+      tabs.forEach(t => tabWindowMap.set(t.id, t.windowId));
+    }
+    if (callback) callback();
+  });
+}
+
+// Re-points the panel at whatever tab is active in ITS window. Used when the
+// tab it was showing was dragged into (or out of) another window.
+function resyncActiveTab() {
+  if (myWindowId === null) return;
+  chrome.tabs.query({ active: true, windowId: myWindowId }, (tabs) => {
+    const tab = tabs && tabs[0];
+    if (!tab) return;
+    tabWindowMap.set(tab.id, tab.windowId);
+    if (tab.id !== currentTabId) switchToTab(tab.id);
+  });
+}
 
 // sidepanel-init.js uses these getters for live stats
 Object.defineProperty(window, 'allItems', {
@@ -77,12 +136,18 @@ function saveState(tabId) {
   if (!tabId) return;
   try {
     const cache = getTabCache(tabId);
-    let entries = [...cache.items.entries()]
-      .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0));
+    // Pinned events survive the MAX_ITEMS cap — the user explicitly kept them.
+    let entries = [...cache.items.entries()].sort((a, b) => {
+      const pa = cache.pinnedIds.has(a[1].msgId || a[0]) ? 1 : 0;
+      const pb = cache.pinnedIds.has(b[1].msgId || b[0]) ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      return (b[1].timestamp || 0) - (a[1].timestamp || 0);
+    });
     if (entries.length > MAX_ITEMS) entries = entries.slice(0, MAX_ITEMS);
 
-    const serialItems = JSON.stringify(entries);
-    const serialSent  = JSON.stringify([...cache.sentIds].slice(-MAX_ITEMS));
+    const serialItems  = JSON.stringify(entries);
+    const serialSent   = JSON.stringify([...cache.sentIds].slice(-MAX_ITEMS));
+    const serialPinned = JSON.stringify([...cache.pinnedIds].slice(-MAX_ITEMS));
 
     if ((serialItems.length + serialSent.length) * 2 > 4 * 1024 * 1024) {
       rsWarn('[RS Panel] saveState: too large, skipping');
@@ -91,6 +156,7 @@ function saveState(tabId) {
     chrome.storage.local.set({
       [`allItems_${tabId}`]: serialItems,
       [`sentIds_${tabId}`]:  serialSent,
+      [`pinned_${tabId}`]:   serialPinned,
     }, () => {
       if (chrome.runtime.lastError) rsWarn('[RS Panel] saveState:', chrome.runtime.lastError.message);
     });
@@ -99,34 +165,48 @@ function saveState(tabId) {
 
 function loadState(tabId, callback) {
   if (!tabId) { callback(); return; }
-  chrome.storage.local.get([`allItems_${tabId}`, `sentIds_${tabId}`], (result) => {
-    const cache = getTabCache(tabId);
-    try {
-      if (result[`allItems_${tabId}`]) {
-        const stored = new Map(JSON.parse(result[`allItems_${tabId}`]));
-        // Only accept items whose key belongs to this tab (safety guard)
-        stored.forEach((v, k) => {
-          if (k.startsWith(`${tabId}:`) && !cache.items.has(k)) {
-            cache.items.set(k, v);
-          }
-        });
-      }
-    } catch(e) { rsWarn('[RS Panel] loadState items error:', e); }
-    try {
-      if (result[`sentIds_${tabId}`]) {
-        const stored = new Set(JSON.parse(result[`sentIds_${tabId}`]));
-        stored.forEach(id => cache.sentIds.add(id));
-      }
-    } catch(e) { rsWarn('[RS Panel] loadState sentIds error:', e); }
-    cache.loaded = true;
-    callback();
-  });
+  chrome.storage.local.get(
+    [`allItems_${tabId}`, `sentIds_${tabId}`, `pinned_${tabId}`],
+    (result) => {
+      const cache = getTabCache(tabId);
+      try {
+        if (result[`allItems_${tabId}`]) {
+          const stored = new Map(JSON.parse(result[`allItems_${tabId}`]));
+          // Only accept items whose key belongs to this tab (safety guard)
+          stored.forEach((v, k) => {
+            if (k.startsWith(`${tabId}:`) && !cache.items.has(k)) {
+              cache.items.set(k, v);
+            }
+          });
+        }
+      } catch(e) { rsWarn('[RS Panel] loadState items error:', e); }
+      try {
+        if (result[`sentIds_${tabId}`]) {
+          const stored = new Set(JSON.parse(result[`sentIds_${tabId}`]));
+          stored.forEach(id => cache.sentIds.add(id));
+        }
+      } catch(e) { rsWarn('[RS Panel] loadState sentIds error:', e); }
+      try {
+        if (result[`pinned_${tabId}`]) {
+          const stored = new Set(JSON.parse(result[`pinned_${tabId}`]));
+          stored.forEach(id => cache.pinnedIds.add(id));
+        }
+      } catch(e) { rsWarn('[RS Panel] loadState pinned error:', e); }
+      cache.loaded = true;
+      callback();
+    }
+  );
 }
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const filterInput = document.getElementById('filter-input');
 const clearBtn    = document.getElementById('clear-btn');
 const itemList    = document.getElementById('localStorage-items');
+const chipBar     = document.getElementById('facet-chips');
+
+// ── Active facets ─────────────────────────────────────────────────────────────
+let activeType   = 'all';   // 'all' | one of TRACKED_EVENT_TYPES
+let failedOnly   = false;   // show only events whose batch failed
 
 const JSON_CLASSES = {
   int: 'json-int', float: 'json-float', boolean: 'json-boolean',
@@ -152,28 +232,117 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ── Filter ────────────────────────────────────────────────────────────────────
+// Search runs against `data-search`, which holds the event name plus the full
+// serialized payload — so typing a property value (e.g. an order id) matches too.
 function applyFilter() {
-  const q = filterInput.value.toLowerCase();
+  const q = filterInput.value.trim().toLowerCase();
   clearBtn.style.display = q ? 'block' : 'none';
+
+  let visible = 0;
   document.querySelectorAll('#localStorage-items .item').forEach(el => {
-    const s = el.querySelector('.subtitle')?.textContent.toLowerCase() || '';
-    const k = el.querySelector('.key')?.textContent.toLowerCase() || '';
-    el.classList.toggle('hidden', !(s.includes(q) || k.includes(q)));
+    const haystack = el.getAttribute('data-search') || '';
+    const type     = el.getAttribute('data-type') || '';
+    const failed   = el.getAttribute('data-failed') === '1';
+
+    const matchesText   = !q || haystack.includes(q);
+    const matchesType   = activeType === 'all' || type === activeType;
+    const matchesStatus = !failedOnly || failed;
+    const show = matchesText && matchesType && matchesStatus;
+
+    el.classList.toggle('hidden', !show);
+    if (show) visible++;
   });
+
+  // Distinguish "nothing captured yet" from "filter matched nothing"
+  const hasItems = itemList.children.length > 0;
+  document.body.classList.toggle('no-matches', hasItems && visible === 0);
 }
+
 filterInput.addEventListener('input', applyFilter);
 clearBtn.addEventListener('click', () => {
   filterInput.value = '';
   clearBtn.style.display = 'none';
   applyFilter();
+  filterInput.focus();
 });
-new MutationObserver(() => applyFilter()).observe(itemList, { childList: true, subtree: true });
+
+// ── Facet chips (event type + failed-only) ────────────────────────────────────
+function renderChips() {
+  if (!chipBar) return;
+
+  const counts = { all: 0 };
+  let failedCount = 0;
+
+  if (currentTabId) {
+    getTabCache(currentTabId).items.forEach((data) => {
+      const t = data.eventType || 'unknown';
+      counts[t] = (counts[t] || 0) + 1;
+      counts.all++;
+      if (data.httpOk === false) failedCount++;
+    });
+  }
+
+  // Reset a facet that no longer has any matching events
+  if (activeType !== 'all' && !counts[activeType]) activeType = 'all';
+  if (failedOnly && failedCount === 0) failedOnly = false;
+
+  const frag = document.createDocumentFragment();
+
+  const mkChip = (label, count, isActive, onClick, extraClass) => {
+    const chip = document.createElement('button');
+    chip.className = 'facet-chip' + (isActive ? ' active' : '') + (extraClass ? ' ' + extraClass : '');
+    chip.type = 'button';
+    const name = document.createElement('span');
+    name.className = 'facet-chip-label';
+    name.textContent = label;
+    chip.appendChild(name);
+    const badge = document.createElement('span');
+    badge.className = 'facet-chip-count';
+    badge.textContent = count;
+    chip.appendChild(badge);
+    chip.addEventListener('click', onClick);
+    return chip;
+  };
+
+  frag.appendChild(mkChip('All', counts.all, activeType === 'all', () => {
+    activeType = 'all';
+    renderChips();
+    applyFilter();
+  }));
+
+  // Only surface types that actually occurred, so the bar stays short
+  TRACKED_EVENT_TYPES.forEach(t => {
+    if (!counts[t]) return;
+    frag.appendChild(mkChip(t, counts[t], activeType === t, () => {
+      activeType = (activeType === t) ? 'all' : t;
+      renderChips();
+      applyFilter();
+    }));
+  });
+
+  if (failedCount > 0) {
+    frag.appendChild(mkChip('failed', failedCount, failedOnly, () => {
+      failedOnly = !failedOnly;
+      renderChips();
+      applyFilter();
+    }, 'facet-chip-failed'));
+  }
+
+  chipBar.replaceChildren(frag);
+  chipBar.classList.toggle('hidden', counts.all === 0);
+}
 
 // ── Tab helper ────────────────────────────────────────────────────────────────
+// Resolves this panel's own window and its active tab in one call — the tab's
+// windowId is the source of truth for every later isolation check.
 function getCurrentTabId(callback) {
   try {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      callback((tabs && tabs[0]?.id) ? tabs[0].id : null);
+      const tab = tabs && tabs[0];
+      if (!tab || !tab.id) { callback(null); return; }
+      myWindowId = tab.windowId;
+      tabWindowMap.set(tab.id, tab.windowId);
+      callback(tab.id);
     });
   } catch(e) { callback(null); }
 }
@@ -186,14 +355,18 @@ function clearAllItems(tabId) {
   const cache = getTabCache(tabId);
   cache.items.clear();
   cache.sentIds.clear();
+  cache.pinnedIds.clear();
+  cache.reqMap.clear();
   cache.loaded = true;
 
-  chrome.storage.local.remove([`allItems_${tabId}`, `sentIds_${tabId}`]);
+  chrome.storage.local.remove([`allItems_${tabId}`, `sentIds_${tabId}`, `pinned_${tabId}`]);
   try { chrome.tabs.sendMessage(tabId, { type: 'clearAll' }, () => chrome.runtime.lastError); } catch(e) {}
 
   if (tabId === currentTabId) {
     itemList.innerHTML = '';
     document.body.classList.add('clear-list');
+    document.body.classList.remove('no-matches');
+    renderChips();
     //console.log(`[RS DEBUG] clearAllItems: DOM cleared for active tab ${tabId}`);
   }
 
@@ -202,19 +375,21 @@ function clearAllItems(tabId) {
 }
 
 // ── CORE: ingest batch events for a specific tab ──────────────────────────────
-function ingestBatchEvents(batchArray, timestamp, targetTabId) {
+function ingestBatchEvents(batchArray, timestamp, targetTabId, requestId) {
   if (!Array.isArray(batchArray) || !targetTabId || targetTabId < 0) return;
 
   const cache = getTabCache(targetTabId);
   let newCount = 0;
+  const keysInRequest = [];
 
   let sentChanged = false;
   batchArray.forEach((event) => {
     if (!event?.messageId) return;
-    if (event.type !== 'track' && event.type !== 'page') return;
+    if (!TRACKED_TYPE_SET.has(event.type)) return;
 
     const msgId = event.messageId;
     const key   = cacheKey(targetTabId, msgId);
+    keysInRequest.push(key);
 
     if (!cache.sentIds.has(msgId)) {
       cache.sentIds.add(msgId);
@@ -225,8 +400,10 @@ function ingestBatchEvents(batchArray, timestamp, targetTabId) {
       cache.items.set(key, {
         parsedValue: event,
         value: JSON.stringify(event),
+        // identify/group/alias carry no event name — fall back to the type
         originalKey: event.event || event.name || event.type,
-        propertiesKey: event.properties || null,
+        eventType: event.type || 'unknown',
+        propertiesKey: event.properties || event.traits || null,
         timestamp: event.originalTimestamp
           ? new Date(event.originalTimestamp).getTime()
           : (timestamp || Date.now()),
@@ -243,6 +420,17 @@ function ingestBatchEvents(batchArray, timestamp, targetTabId) {
     }
   });
 
+  // Remember which events rode in this request so its HTTP result can be
+  // attributed back to them when it arrives.
+  if (requestId && keysInRequest.length) {
+    cache.reqMap.set(requestId, keysInRequest);
+    // Bound the map — results arrive within seconds, stale ids are dead weight
+    if (cache.reqMap.size > 200) {
+      const oldest = cache.reqMap.keys().next().value;
+      cache.reqMap.delete(oldest);
+    }
+  }
+
   // Save if new items added OR if sentIds changed (badge persistence across reloads)
   if (newCount > 0 || sentChanged) saveState(targetTabId);
 
@@ -250,6 +438,32 @@ function ingestBatchEvents(batchArray, timestamp, targetTabId) {
     //console.log(`[RS DEBUG] ingestBatch -> renderAll for active tab ${targetTabId}`);
     renderAll();
   }
+}
+
+// ── CORE: apply an HTTP result to the events that were in that request ────────
+function applyBatchResult(targetTabId, requestId, status, ok, error) {
+  if (!targetTabId || targetTabId < 0 || !requestId) return;
+
+  const cache = getTabCache(targetTabId);
+  const keys  = cache.reqMap.get(requestId);
+  if (!keys || !keys.length) return;
+
+  let changed = false;
+  keys.forEach((key) => {
+    const item = cache.items.get(key);
+    if (!item) return;
+    if (item.httpStatus === status && item.httpOk === ok) return;
+    item.httpStatus = status;
+    item.httpOk     = ok === true;
+    item.httpError  = error || null;
+    changed = true;
+  });
+
+  cache.reqMap.delete(requestId);
+
+  if (!changed) return;
+  saveState(targetTabId);
+  if (targetTabId === currentTabId) renderAll();
 }
 
 // ── CORE: ingest localStorage items — ONLY for the active tab ─────────────────
@@ -278,6 +492,7 @@ function ingestLocalStorageItems(itemsObj, targetTabId) {
         parsedValue: data.parsedValue,
         value: data.value,
         originalKey: data.originalKey || msgId,
+        eventType: data.eventType || data.parsedValue?.type || 'unknown',
         propertiesKey: data.propertiesKey || null,
         timestamp: data.timestamp || Date.now(),
         source: 'localStorage',
@@ -295,19 +510,37 @@ function ingestLocalStorageItems(itemsObj, targetTabId) {
 }
 
 // ── Render — reads exclusively from the active tab's cache ────────────────────
-function renderAll() {
+// `force` rebuilds the whole list; used when the sort order changes (pinning).
+function renderAll(force) {
   if (!currentTabId) {
     itemList.innerHTML = '';
     document.body.classList.add('clear-list');
+    renderChips();
     return;
   }
 
-  const { items, sentIds } = getTabCache(currentTabId);
+  const { items, sentIds, pinnedIds } = getTabCache(currentTabId);
 
-  const sorted = [...items.entries()]
-    .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0));
+  // Pinned events float to the top; the rest stay newest-first.
+  const sorted = [...items.entries()].sort((a, b) => {
+    const pa = pinnedIds.has(a[1].msgId || a[0]) ? 1 : 0;
+    const pb = pinnedIds.has(b[1].msgId || b[0]) ? 1 : 0;
+    if (pa !== pb) return pb - pa;
+    return (b[1].timestamp || 0) - (a[1].timestamp || 0);
+  });
 
-  //console.log(`[RS DEBUG] renderAll | currentTabId=${currentTabId} | items=${sorted.length} | DOM had=${itemList.children.length}`);
+  // A forced rebuild throws away the DOM, so remember which rows the user had
+  // expanded and restore them afterwards.
+  let expandedKeys = null;
+  if (force) {
+    expandedKeys = new Set();
+    itemList.querySelectorAll('.item[data-key]').forEach(el => {
+      if (el.querySelector('.value-container.expanded')) {
+        expandedKeys.add(el.getAttribute('data-key'));
+      }
+    });
+    itemList.innerHTML = '';
+  }
 
   // Build a map of currently rendered DOM items
   const domMap = new Map();
@@ -316,42 +549,28 @@ function renderAll() {
   });
 
   if (domMap.size === 0) {
-    // Fresh render — sorted descending so newest is first in fragment
+    // Fresh render — already in display order
     const frag = document.createDocumentFragment();
     sorted.forEach(([key, data]) => {
-      const isSent = sentIds.has(data.msgId || key);
-      const el = createItemElement(key, data, isSent);
-      el.setAttribute('data-key', key);
-      frag.appendChild(el);
+      frag.appendChild(buildRow(key, data, sentIds, pinnedIds));
     });
     itemList.appendChild(frag);
-    //console.log(`[RS DEBUG] renderAll: fresh render, appended ${sorted.length} items`);
   } else {
     // Incremental update:
-    // - new item  -> insertBefore firstChild (top)
-    // - existing  -> update sent badge only
+    // - new item  -> insert above the first unpinned row
+    // - existing  -> refresh badges in place
     // - stale     -> remove from DOM
     sorted.forEach(([key, data]) => {
-      const isSent = sentIds.has(data.msgId || key);
       if (domMap.has(key)) {
         const el = domMap.get(key);
         domMap.delete(key);
-        if (isSent && !el.classList.contains('sent-item')) {
-          el.classList.add('sent-item');
-          const bc = el.querySelector('.badges-container');
-          if (bc && !bc.querySelector('.sent-badge')) bc.appendChild(createSentBadge());
-        }
-        // Upgrade localStorage item to batch when source changed in cache
-        if (data.source === 'batch' && !el.classList.contains('batch-item')) {
-          el.classList.add('batch-item');
-          const bc = el.querySelector('.badges-container');
-          if (bc && !bc.querySelector('.batch-badge')) bc.appendChild(createBatchBadge());
-        }
+        refreshRow(el, data, sentIds, pinnedIds);
       } else {
-        const el = createItemElement(key, data, isSent);
-        el.setAttribute('data-key', key);
+        const el = buildRow(key, data, sentIds, pinnedIds);
         el.classList.add('new-item');
-        itemList.insertBefore(el, itemList.firstChild);
+        // Keep pinned rows at the top by anchoring new arrivals below them
+        const anchor = itemList.querySelector('.item:not(.pinned-item)') || null;
+        itemList.insertBefore(el, anchor);
         setTimeout(() => {
           el.classList.add('transition-complete');
           setTimeout(() => el.classList.remove('new-item', 'transition-complete'), 300);
@@ -362,12 +581,90 @@ function renderAll() {
     domMap.forEach(el => el.remove());
   }
 
+  // Restore expansion state after a forced rebuild
+  if (expandedKeys && expandedKeys.size) {
+    expandedKeys.forEach(k => {
+      const el = itemList.querySelector(`.item[data-key="${CSS.escape(k)}"]`);
+      if (!el) return;
+      el.querySelector('.value-container')?.classList.add('expanded');
+      el.querySelector('.toggle-icon')?.classList.remove('collapsed');
+    });
+  }
+
   if (itemList.children.length > 0) {
     document.body.classList.remove('clear-list');
   } else {
     document.body.classList.add('clear-list');
   }
+  renderChips();
   applyFilter();
+}
+
+// Creates a row and stamps the attributes the filter reads.
+function buildRow(key, data, sentIds, pinnedIds) {
+  const isSent   = sentIds.has(data.msgId || key);
+  const isPinned = pinnedIds.has(data.msgId || key);
+  const el = createItemElement(key, data, isSent, isPinned);
+  el.setAttribute('data-key', key);
+  stampFilterAttrs(el, data);
+  return el;
+}
+
+// Search index: event name + full payload, so property values are searchable.
+function stampFilterAttrs(el, data) {
+  let payload = '';
+  try {
+    payload = data.value || JSON.stringify(data.parsedValue || {});
+  } catch (e) { payload = ''; }
+  el.setAttribute('data-search', `${data.originalKey || ''} ${payload}`.toLowerCase());
+  el.setAttribute('data-type', data.eventType || 'unknown');
+  el.setAttribute('data-failed', data.httpOk === false ? '1' : '0');
+}
+
+// Updates an already-rendered row without rebuilding it.
+function refreshRow(el, data, sentIds, pinnedIds) {
+  const key      = el.getAttribute('data-key');
+  const isSent   = sentIds.has(data.msgId || key);
+  const isPinned = pinnedIds.has(data.msgId || key);
+  const bc = el.querySelector('.badges-container');
+
+  if (isSent && !el.classList.contains('sent-item')) {
+    el.classList.add('sent-item');
+    if (bc && !bc.querySelector('.sent-badge')) bc.appendChild(createSentBadge());
+  }
+  // Upgrade localStorage item to batch when source changed in cache
+  if (data.source === 'batch' && !el.classList.contains('batch-item')) {
+    el.classList.add('batch-item');
+    if (bc && !bc.querySelector('.batch-badge')) bc.appendChild(createBatchBadge());
+  }
+
+  el.classList.toggle('pinned-item', isPinned);
+  const pinBtn = el.querySelector('.pin-btn');
+  if (pinBtn) {
+    pinBtn.classList.toggle('active', isPinned);
+    pinBtn.title = isPinned ? 'Unpin event' : 'Pin event';
+  }
+
+  // HTTP result badge — added once the response for its batch lands
+  if (bc && data.httpStatus !== undefined) {
+    const existing = bc.querySelector('.http-badge');
+    const fresh = createHttpBadge(data);
+    if (existing) existing.replaceWith(fresh);
+    else bc.appendChild(fresh);
+    el.classList.toggle('failed-item', data.httpOk === false);
+  }
+
+  stampFilterAttrs(el, data);
+}
+
+// ── Pin toggle ────────────────────────────────────────────────────────────────
+function togglePin(msgId) {
+  if (!currentTabId || !msgId) return;
+  const cache = getTabCache(currentTabId);
+  if (cache.pinnedIds.has(msgId)) cache.pinnedIds.delete(msgId);
+  else cache.pinnedIds.add(msgId);
+  saveState(currentTabId);
+  renderAll(true); // sort order changed — full rebuild
 }
 
 // ── Switch tab ────────────────────────────────────────────────────────────────
@@ -396,10 +693,8 @@ function switchToTab(newTabId) {
 
     //console.log(`[RS DEBUG] switchToTab: showCached | tabId=${newTabId} | items=${cache.items.size}`);
 
-    if (cache.items.size > 0) {
-      document.body.classList.remove('clear-list');
-      renderAll();
-    }
+    if (cache.items.size > 0) document.body.classList.remove('clear-list');
+    renderAll(); // always run so the facet chips reflect the new tab
     // Fetch localStorage only for the newly active tab
     fetchAndIngestLocalStorage(newTabId);
   };
@@ -450,11 +745,13 @@ function fetchAndIngestLocalStorage(tabId) {
 
         chrome.scripting.executeScript({
           target: { tabId },
-          func: function safeGetLocalStorage() {
+          args: [TRACKED_EVENT_TYPES],
+          func: function safeGetLocalStorage(trackedTypes) {
             try {
               const items = {};
               if (!localStorage) return items;
 
+              const typeSet   = new Set(trackedTypes);
               const useRudder = window.__rsPatternRudder !== false;
               const useQueue  = window.__rsPatternQueue  !== false;
               const rules     = Array.isArray(window.__rsCustomRules) ? window.__rsCustomRules : [];
@@ -471,12 +768,13 @@ function fetchAndIngestLocalStorage(tabId) {
 
               function addEvent(ev) {
                 if (!ev || typeof ev !== 'object' || !ev.messageId) return;
-                if (ev.type !== 'track' && ev.type !== 'page') return;
+                if (!typeSet.has(ev.type)) return;
                 items[ev.messageId] = {
                   value:         JSON.stringify(ev),
                   parsedValue:   ev,
-                  originalKey:   ev.event || ev.name || ev.messageId,
-                  propertiesKey: ev.properties || null,
+                  originalKey:   ev.event || ev.name || ev.type || ev.messageId,
+                  eventType:     ev.type || 'unknown',
+                  propertiesKey: ev.properties || ev.traits || null,
                   timestamp:     Date.now(),
                   source:        'localStorage',
                   msgId:         ev.messageId,
@@ -606,6 +904,39 @@ function createBatchBadge() {
   return b;
 }
 
+function createTypeBadge(type) {
+  const b = document.createElement('span');
+  b.className = 'type-badge type-' + (type || 'unknown');
+  b.textContent = type || 'unknown';
+  return b;
+}
+
+// Shows the HTTP outcome of the batch this event was delivered in.
+// status 0 means the request never got a response (network error / blocked).
+function createHttpBadge(data) {
+  const b = document.createElement('span');
+  const ok = data.httpOk === true;
+  b.className = 'http-badge ' + (ok ? 'http-ok' : 'http-fail');
+  b.textContent = data.httpStatus ? String(data.httpStatus) : 'ERR';
+  b.title = ok
+    ? `Delivered — HTTP ${data.httpStatus}`
+    : `Failed — ${data.httpError || 'HTTP ' + data.httpStatus}`;
+  return b;
+}
+
+function createPinButton(msgId, isPinned) {
+  const btn = document.createElement('button');
+  btn.className = 'pin-btn' + (isPinned ? ' active' : '');
+  btn.type = 'button';
+  btn.title = isPinned ? 'Unpin event' : 'Pin event';
+  btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation(); // don't toggle the row open
+    togglePin(msgId);
+  });
+  return btn;
+}
+
 function createTableFromJson(json) {
   const table = document.createElement('table');
   table.className = 'json-table';
@@ -660,13 +991,15 @@ function showToast(message, type = 'info') {
   setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 500); }, 1000);
 }
 
-function createItemElement(key, data, isSent) {
+function createItemElement(key, data, isSent, isPinned) {
   data = data || {};
   const itemDiv = document.createElement('div');
   itemDiv.className = 'item';
   itemDiv.setAttribute('data-key', key);
   if (isSent) itemDiv.classList.add('sent-item');
   if (data.source === 'batch') itemDiv.classList.add('batch-item');
+  if (isPinned) itemDiv.classList.add('pinned-item');
+  if (data.httpOk === false) itemDiv.classList.add('failed-item');
 
   const headerDiv = document.createElement('div');
   headerDiv.className = 'item-header';
@@ -691,12 +1024,16 @@ function createItemElement(key, data, isSent) {
     timeDiv.textContent = new Date(data.timestamp).toLocaleTimeString('en-GB', { hour12: false });
     badgesContainer.appendChild(timeDiv);
   }
+  badgesContainer.appendChild(createTypeBadge(data.eventType));
   if (isSent) badgesContainer.appendChild(createSentBadge());
   if (data.source === 'batch') badgesContainer.appendChild(createBatchBadge());
+  if (data.httpStatus !== undefined) badgesContainer.appendChild(createHttpBadge(data));
 
   keyContainer.appendChild(subtitleDiv);
   keyContainer.appendChild(keyDiv);
   keyContainer.appendChild(badgesContainer);
+
+  const pinBtn = createPinButton(data.msgId || key, isPinned);
 
   const toggleIcon = document.createElement('span');
   toggleIcon.className = 'toggle-icon collapsed';
@@ -726,6 +1063,7 @@ function createItemElement(key, data, isSent) {
   valueContainer.appendChild(propertiesDiv);
   valueContainer.appendChild(insideValueContainer);
   headerDiv.appendChild(keyContainer);
+  headerDiv.appendChild(pinBtn);
   headerDiv.appendChild(toggleIcon);
   itemDiv.appendChild(headerDiv);
   itemDiv.appendChild(valueContainer);
@@ -809,24 +1147,28 @@ document.addEventListener('DOMContentLoaded', function() {
     loadState(tabId, () => {
       if (currentTabId === tabId) {
         //console.log(`[RS DEBUG] Initial loadState done | tabId=${tabId} | items=${getTabCache(tabId).items.size}`);
-        if (getTabCache(tabId).items.size > 0) {
-          document.body.classList.remove('clear-list');
-          renderAll();
-        }
+        if (getTabCache(tabId).items.size > 0) document.body.classList.remove('clear-list');
+        renderAll();
         fetchAndIngestLocalStorage(tabId);
       }
     });
 
     // ── Message listener ──────────────────────────────────────────────────
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message.type !== 'updatePopup') { return true; }
+      if (message.type !== 'updatePopup' && message.type !== 'batchResult') return true;
 
       const msgTabId = message.tabId;
 
       // Drop messages with invalid tabId — never fall back to currentTabId
       if (!msgTabId || msgTabId < 0) {
-        rsWarn('[RS Panel] updatePopup: invalid tabId, DROPPING', msgTabId);
+        rsWarn('[RS Panel] message with invalid tabId, DROPPING', msgTabId);
         if (sendResponse) sendResponse({ received: false });
+        return true;
+      }
+
+      if (message.type === 'batchResult') {
+        applyBatchResult(msgTabId, message.requestId, message.status, message.ok, message.error);
+        if (sendResponse) sendResponse({ received: true });
         return true;
       }
 
@@ -835,7 +1177,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (message.source === 'network' && Array.isArray(message.data)) {
         // Network (batch) events are always ingested regardless of which tab is active —
         // they carry a verified tabId from background.js and must not be dropped.
-        ingestBatchEvents(message.data, message.timestamp, msgTabId);
+        ingestBatchEvents(message.data, message.timestamp, msgTabId, message.requestId);
       } else if (message.source === 'localStorage' && message.data) {
         // localStorage events are only accepted for the active tab (guard is inside
         // ingestLocalStorageItems) to prevent same-origin bleed.
@@ -867,7 +1209,11 @@ document.addEventListener('DOMContentLoaded', function() {
     chrome.tabs.onRemoved.addListener((removedTabId) => {
       //.log(`[RS DEBUG] onRemoved | tabId=${removedTabId}`);
       tabCache.delete(removedTabId);
-      chrome.storage.local.remove([`allItems_${removedTabId}`, `sentIds_${removedTabId}`]);
+      chrome.storage.local.remove([
+        `allItems_${removedTabId}`,
+        `sentIds_${removedTabId}`,
+        `pinned_${removedTabId}`,
+      ]);
     });
   });
 });

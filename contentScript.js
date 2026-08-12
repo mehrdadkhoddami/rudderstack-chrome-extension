@@ -1,11 +1,4 @@
 // contentScript.js
-(function(){
-  if (window.__perfHelpersInjected) return;
-  window.__perfHelpersInjected = true;
-  window._throttle = function(fn, wait){ var last=0; return function(){ var now=Date.now(); if(now-last>wait){ last=now; fn.apply(this, arguments);} }; };
-  window._debounce = function(fn, wait){ var t; return function(){ var ctx=this, args=arguments; clearTimeout(t); t=setTimeout(function(){ fn.apply(ctx,args); }, wait); }; };
-})();
-
 (() => {
   let isExtensionActive = true;
   let port = null;
@@ -21,10 +14,27 @@
 
   chrome.storage.local.get(['enableDebug'], (res) => {
     _debugEnabled = res.enableDebug === true;
+    pushDebugToPage();
   });
   chrome.storage.onChanged.addListener((changes) => {
-    if (changes.enableDebug) _debugEnabled = changes.enableDebug.newValue === true;
+    if (changes.enableDebug) {
+      _debugEnabled = changes.enableDebug.newValue === true;
+      pushDebugToPage();
+    }
   });
+
+  // interceptor.js runs in page context and cannot read chrome.storage, so the
+  // debug flag has to be pushed across the boundary.
+  function pushDebugToPage() {
+    try {
+      window.dispatchEvent(new CustomEvent('__rs_update_debug', { detail: { debug: _debugEnabled } }));
+    } catch (e) { /* noop */ }
+  }
+
+  // ── Event types the tracker ingests ────────────────────────────────────────
+  // Matches the RudderStack spec API surface. Kept in sync with the same list
+  // in popup.js.
+  const TRACKED_EVENT_TYPES = new Set(['track', 'page', 'screen', 'identify', 'group', 'alias']);
 
   // ── localStorage key pattern cache (global settings) ──────────────────────
   let _lsPatterns = {
@@ -113,30 +123,48 @@
 
   function addEventToItems(ev, outItems) {
     if (!ev || typeof ev !== 'object' || !ev.messageId) return;
-    if (ev.type !== 'track' && ev.type !== 'page') return;
+    if (!TRACKED_EVENT_TYPES.has(ev.type)) return;
     outItems[ev.messageId] = {
       value:        JSON.stringify(ev),
       parsedValue:  ev,
-      originalKey:  ev.event || ev.name || ev.messageId,
-      propertiesKey: ev.properties || null,
+      // identify/group/alias have no `event` name — fall back to the type.
+      originalKey:  ev.event || ev.name || ev.type || ev.messageId,
+      eventType:    ev.type || 'unknown',
+      propertiesKey: ev.properties || ev.traits || null,
       timestamp:    Date.now(),
       source:       'localStorage',
       msgId:        ev.messageId,
     };
   }
 
-  // ── Pending batch queue (captured before port is ready) ────────────────────
-  const pendingBatches = [];
+  // ── Pending message queue (captured before port is ready) ──────────────────
+  const pendingMessages = [];
 
-  function flushPendingBatches() {
-    if (!port || pendingBatches.length === 0) return;
-    rsLog(`[RS Content] Flushing ${pendingBatches.length} pending batch(es)`);
-    while (pendingBatches.length > 0) {
-      const item = pendingBatches.shift();
+  function postOrQueue(message) {
+    if (port) {
       try {
-        port.postMessage({ type: 'batchCaptured', data: item.batch, timestamp: item.timestamp });
+        port.postMessage(message);
+        return;
+      } catch (e) {
+        rsWarn('[RS Content] postMessage failed, queuing:', e);
+        pendingMessages.push(message);
+        handleConnectionError();
+        return;
+      }
+    }
+    pendingMessages.push(message);
+  }
+
+  function flushPendingMessages() {
+    if (!port || pendingMessages.length === 0) return;
+    rsLog(`[RS Content] Flushing ${pendingMessages.length} pending message(s)`);
+    while (pendingMessages.length > 0) {
+      const message = pendingMessages.shift();
+      try {
+        port.postMessage(message);
       } catch(e) {
-        rsWarn('[RS Content] Failed to flush pending batch:', e);
+        rsWarn('[RS Content] Failed to flush pending message:', e);
+        pendingMessages.unshift(message);
         handleConnectionError();
         break;
       }
@@ -156,8 +184,10 @@
       const script = document.createElement('script');
       script.src = scriptUrl;
       script.dataset.pattern = pattern || '/beacon/v1/batch';
+      script.dataset.debug   = _debugEnabled ? 'true' : 'false';
       script.onload = () => {
         script.remove();
+        pushDebugToPage();
         rsLog('[RS Content] interceptor.js injected, pattern:', pattern);
       };
       script.onerror = (e) => {
@@ -172,24 +202,24 @@
   // ── Listen for captured batches from page context ──────────────────────────
   window.addEventListener('__rs_batch_captured', (e) => {
     try {
-      const { batch, timestamp, sourceType } = e.detail;
+      const { batch, timestamp, sourceType, requestId } = e.detail;
       if (!Array.isArray(batch) || !batch.length) return;
       rsLog(`[RS Content] __rs_batch_captured: ${batch.length} events via ${sourceType}`);
-
-      if (port) {
-        try {
-          port.postMessage({ type: 'batchCaptured', data: batch, timestamp });
-        } catch (err) {
-          rsWarn('[RS Content] Failed to post batchCaptured, queuing:', err);
-          pendingBatches.push({ batch, timestamp });
-          handleConnectionError();
-        }
-      } else {
-        rsLog('[RS Content] Port not ready, queuing batch');
-        pendingBatches.push({ batch, timestamp });
-      }
+      postOrQueue({ type: 'batchCaptured', data: batch, timestamp, requestId });
     } catch (err) {
       rsWarn('[RS Content] Error handling __rs_batch_captured:', err);
+    }
+  });
+
+  // ── Listen for HTTP results of previously captured batches ─────────────────
+  window.addEventListener('__rs_batch_result', (e) => {
+    try {
+      const { requestId, status, ok, error } = e.detail;
+      if (!requestId) return;
+      rsLog(`[RS Content] __rs_batch_result: ${requestId} status=${status} ok=${ok}`);
+      postOrQueue({ type: 'batchResult', requestId, status, ok, error });
+    } catch (err) {
+      rsWarn('[RS Content] Error handling __rs_batch_result:', err);
     }
   });
 
@@ -222,6 +252,10 @@
       }
     } catch (e) { rsWarn('[RS Content] Error in checkAndNotifyChanges:', e); }
   }
+
+  // Push the initial debug flag as soon as the page context is available, in
+  // case interceptor.js was injected before the storage read resolved.
+  pushDebugToPage();
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'clearAll') sendResponse({ success: true });
@@ -310,7 +344,7 @@
       chrome.storage.local.get(['batchUrlPattern'], (result) => {
         const pattern = result.batchUrlPattern || '/beacon/v1/batch';
         setupMonitoring(pattern);
-        flushPendingBatches();
+        flushPendingMessages();
       });
 
     } catch (e) {
