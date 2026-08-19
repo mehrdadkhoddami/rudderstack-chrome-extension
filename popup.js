@@ -610,13 +610,59 @@ function buildRow(key, data, sentIds, pinnedIds) {
   return el;
 }
 
-// Search index: event name + full payload, so property values are searchable.
+// Flattens an object into "key value key value …" for substring search.
+// Depth- and size-capped so a pathological payload can't stall rendering.
+function flattenForSearch(value, out, depth) {
+  if (depth > 4 || out.length > 120) return;
+  if (value === null || value === undefined) return;
+
+  if (Array.isArray(value)) {
+    value.forEach(v => flattenForSearch(v, out, depth + 1));
+    return;
+  }
+  if (typeof value === 'object') {
+    Object.entries(value).forEach(([k, v]) => {
+      out.push(k);
+      flattenForSearch(v, out, depth + 1);
+    });
+    return;
+  }
+  out.push(String(value));
+}
+
+// Search index — deliberately NOT the whole payload.
+//
+// Indexing the full serialized event made the filter useless: every event
+// carries the same envelope keys (type, event, channel, context, library,
+// name, version, integrations, the page URL …), so common words matched
+// every row and searching by event name stopped narrowing anything down.
+//
+// Scope is therefore the event name, its type, the identity fields, and the
+// properties/traits subtree — the parts that actually differ between events.
+function buildSearchIndex(data) {
+  const parts = [data.originalKey || '', data.eventType || ''];
+
+  const ev = data.parsedValue || {};
+  ['messageId', 'userId', 'anonymousId'].forEach(f => {
+    if (ev[f]) parts.push(String(ev[f]));
+  });
+
+  const props = data.propertiesKey || ev.properties || ev.traits;
+  if (props && typeof props === 'object') {
+    const flat = [];
+    try { flattenForSearch(props, flat, 0); } catch (e) { /* keep the name index */ }
+    parts.push(flat.join(' '));
+  }
+
+  return parts.join(' ').toLowerCase();
+}
+
 function stampFilterAttrs(el, data) {
-  let payload = '';
-  try {
-    payload = data.value || JSON.stringify(data.parsedValue || {});
-  } catch (e) { payload = ''; }
-  el.setAttribute('data-search', `${data.originalKey || ''} ${payload}`.toLowerCase());
+  let index = '';
+  try { index = buildSearchIndex(data); }
+  catch (e) { index = String(data.originalKey || '').toLowerCase(); }
+
+  el.setAttribute('data-search', index);
   el.setAttribute('data-type', data.eventType || 'unknown');
   el.setAttribute('data-failed', data.httpOk === false ? '1' : '0');
 }

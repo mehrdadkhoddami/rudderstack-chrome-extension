@@ -35,7 +35,7 @@ A Chrome extension for monitoring, capturing, and displaying **RudderStack analy
 - Empty-state illustration when the list is clear
 
 ### Filtering & Search
-- **Deep search** — the filter bar matches event names *and* the full serialized payload, so searching a property value (an order id, a user email) finds the event
+- **Scoped search** — the filter bar matches the event name, its type, the identity fields (`messageId`, `userId`, `anonymousId`) and the `properties` / `traits` subtree, so searching a property value (an order id, a SKU) finds the event. Envelope metadata is deliberately excluded — indexing `context`, `library`, `channel`, `integrations` and the page URL made common words match every row and stopped the name filter from narrowing anything
 - **Facet chips** below the toolbar filter by event type, with live counts; only types actually present are shown
 - **Failed** chip isolates events whose batch did not deliver successfully
 - **Pin** any event to keep it at the top of the list; pins persist per tab across panel reopens
